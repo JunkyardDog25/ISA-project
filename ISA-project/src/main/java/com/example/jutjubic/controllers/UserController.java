@@ -5,11 +5,11 @@ import com.example.jutjubic.repositories.UserRepository;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/api")
+@CrossOrigin("http://localhost:5173")
 class UserController {
     private final UserRepository userRepository;
 
@@ -17,14 +17,14 @@ class UserController {
         this.userRepository = userRepository;
     }
 
-    @PostMapping
+    @PostMapping( "/register")
     public User createUser(@Valid @RequestBody User user){
         user.setCreated_at(LocalDateTime.now());
         user.setUpdated_at(LocalDateTime.now());
         return userRepository.save(user);
     }
-    Timestamp timestamp = new Timestamp(System.currentTimeMillis());
-    @GetMapping
+
+    @GetMapping("/users")
     public Iterable<User> getAllUsers(){
         return userRepository.findAll();
     }
