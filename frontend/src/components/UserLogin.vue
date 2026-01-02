@@ -1,19 +1,19 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { registerUser } from '../services/UserService';
+import { loginUser } from '../services/UserService';
 import { Toast } from 'bootstrap';
+import { useAuth } from '@/composables/useAuth.js';
 
 const router = useRouter();
+const { setToken, setUser } = useAuth();
 
 const loading = ref(false);
 
 // Track which fields have been touched (blurred)
 const touched = ref({
-  username: false,
   email: false,
-  password: false,
-  passwordConfirm: false
+  password: false
 });
 
 // Toast notifications (for API errors only)
@@ -41,44 +41,29 @@ function showError(message) {
   showToast(message, 'error');
 }
 
-function showSuccess(message) {
-  showToast(message, 'success');
-}
+// Check for remembered email on mount
+const rememberedEmail = localStorage.getItem('rememberedEmail') || '';
 
 const form = ref({
-  username: '',
-  email: '',
-  firstName: '',
-  lastName: '',
-  address: '',
+  email: rememberedEmail,
   password: '',
-  passwordConfirm: ''
+  remember: !!rememberedEmail
 });
 
 // Live validation errors
 const errors = computed(() => ({
-  username: !form.value.username ? 'Username is required.' : '',
   email: !form.value.email ? 'Email is required.' :
          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.value.email) ? 'Please enter a valid email.' : '',
   password: !form.value.password ? 'Password is required.' :
-            form.value.password.length < 8 ? 'Password must be at least 8 characters.' : '',
-  passwordConfirm: !form.value.passwordConfirm ? 'Please confirm your password.' :
-                   form.value.password !== form.value.passwordConfirm ? 'Passwords do not match.' : ''
+            form.value.password.length < 6 ? 'Password must be at least 6 characters.' : ''
 }));
 
 // Check if form is valid
-const isFormValid = computed(() =>
-  !errors.value.username &&
-  !errors.value.email &&
-  !errors.value.password &&
-  !errors.value.passwordConfirm
-);
+const isFormValid = computed(() => !errors.value.email && !errors.value.password);
 
 function markAllTouched() {
-  touched.value.username = true;
   touched.value.email = true;
   touched.value.password = true;
-  touched.value.passwordConfirm = true;
 }
 
 async function onSubmit() {
@@ -88,25 +73,41 @@ async function onSubmit() {
   loading.value = true;
   try {
     const payload = {
-      username: form.value.username,
-      password: form.value.password,
       email: form.value.email,
-      firstName: form.value.firstName,
-      lastName: form.value.lastName,
-      address: form.value.address
+      password: form.value.password
     };
 
-    await registerUser(payload);
-    showSuccess('Registration successful! Please verify your email.');
+    const res = await loginUser(payload);
+    const data = res.data || {};
+
+    if (data.token) {
+      setToken(data.token, form.value.remember);
+    }
+
+    // Save user data from response
+    if (data.username || data.email) {
+      setUser({
+        username: data.username,
+        email: data.email
+      }, form.value.remember);
+    }
+
+    // Remember or forget the email
+    if (form.value.remember) {
+      localStorage.setItem('rememberedEmail', form.value.email);
+    } else {
+      localStorage.removeItem('rememberedEmail');
+    }
+
     setTimeout(() => {
-      router.push({ path: '/verify', query: { email: form.value.email } });
+      router.push('/');
     }, 1500);
   } catch (e) {
     showError(
       e?.response?.data?.message ||
       e?.response?.statusText ||
       e?.message ||
-      'Registration failed.'
+      'Login failed.'
     );
   } finally {
     loading.value = false;
@@ -115,24 +116,12 @@ async function onSubmit() {
 </script>
 
 <template>
-  <div class="register-container">
+  <div class="login-container">
     <div class="card">
-      <h2>Create account</h2>
-      <p class="subtitle">Join us today and get started.</p>
+      <h2>Welcome back</h2>
+      <p class="subtitle">Please enter your details to sign in.</p>
 
       <form @submit.prevent="onSubmit" novalidate>
-        <div class="form-group">
-          <label>Username</label>
-          <input
-            v-model="form.username"
-            required
-            placeholder="Enter your username"
-            :class="{ 'input-error': touched.username && errors.username }"
-            @blur="touched.username = true"
-          />
-          <span v-if="touched.username && errors.username" class="error-text">{{ errors.username }}</span>
-        </div>
-
         <div class="form-group">
           <label>Email</label>
           <input
@@ -146,57 +135,35 @@ async function onSubmit() {
           <span v-if="touched.email && errors.email" class="error-text">{{ errors.email }}</span>
         </div>
 
-        <div class="name-grid">
-          <div class="form-group">
-            <label>First name</label>
-            <input v-model="form.firstName" placeholder="First name" />
-          </div>
-
-          <div class="form-group">
-            <label>Last name</label>
-            <input v-model="form.lastName" placeholder="Last name" />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>Address</label>
-          <input v-model="form.address" placeholder="Enter your address" />
-        </div>
-
         <div class="form-group">
           <label>Password</label>
           <input
             v-model="form.password"
             type="password"
             required
-            minlength="8"
-            placeholder="Create a password"
+            minlength="6"
+            placeholder="Enter your password"
             :class="{ 'input-error': touched.password && errors.password }"
             @blur="touched.password = true"
           />
           <span v-if="touched.password && errors.password" class="error-text">{{ errors.password }}</span>
         </div>
 
-        <div class="form-group">
-          <label>Confirm password</label>
-          <input
-            v-model="form.passwordConfirm"
-            type="password"
-            required
-            placeholder="Confirm your password"
-            :class="{ 'input-error': touched.passwordConfirm && errors.passwordConfirm }"
-            @blur="touched.passwordConfirm = true"
-          />
-          <span v-if="touched.passwordConfirm && errors.passwordConfirm" class="error-text">{{ errors.passwordConfirm }}</span>
+        <div class="options-row">
+          <label class="remember-label">
+            <input v-model="form.remember" type="checkbox" />
+            <span>Remember me</span>
+          </label>
+          <a href="#" class="forgot-link">Forgot password?</a>
         </div>
 
         <button type="submit" :disabled="loading" class="submit-btn">
-          <span v-if="!loading">Create Account</span>
-          <span v-else>Creating…</span>
+          <span v-if="!loading">Sign in</span>
+          <span v-else>Signing in…</span>
         </button>
 
         <p class="footer-text">
-          Already have an account? <router-link to="/login" class="footer-link">Sign in</router-link>
+          Don't have an account? <router-link to="/register" class="footer-link">Sign up</router-link>
         </p>
       </form>
     </div>
@@ -226,7 +193,7 @@ async function onSubmit() {
 </template>
 
 <style scoped>
-.register-container {
+.login-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -239,7 +206,7 @@ async function onSubmit() {
   background: #fff;
   border-radius: 12px;
   padding: 2.5rem;
-  max-width: 450px;
+  max-width: 400px;
   width: 100%;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
@@ -260,7 +227,7 @@ h2 {
 }
 
 .form-group {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
   text-align: left;
 }
 
@@ -272,7 +239,8 @@ h2 {
   font-size: 0.9rem;
 }
 
-input {
+input[type="email"],
+input[type="password"] {
   width: 100%;
   padding: 0.75rem 1rem;
   border: 1px solid #ddd;
@@ -283,7 +251,8 @@ input {
   background: #fff;
 }
 
-input:focus {
+input[type="email"]:focus,
+input[type="password"]:focus {
   outline: none;
   border-color: #ff0000;
   box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.1);
@@ -308,16 +277,43 @@ input::placeholder {
   margin-top: 0.35rem;
 }
 
-.name-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+.options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+.remember-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #555;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.remember-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #ff0000;
+  cursor: pointer;
+}
+
+.forgot-link {
+  color: #ff0000;
+  text-decoration: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.forgot-link:hover {
+  text-decoration: underline;
 }
 
 .submit-btn {
   width: 100%;
   padding: 0.875rem 1.5rem;
-  margin-top: 0.5rem;
   background: #ff0000;
   color: #fff;
   border: none;
