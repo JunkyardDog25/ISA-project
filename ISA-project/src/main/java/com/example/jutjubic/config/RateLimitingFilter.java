@@ -29,6 +29,13 @@ public class RateLimitingFilter implements Filter {
         HttpServletRequest httpRequest = (HttpServletRequest) servletRequest;
         HttpServletResponse httpResponse = (HttpServletResponse) servletResponse;
 
+        // Only apply rate limiting to login endpoint
+        String requestUri = httpRequest.getRequestURI();
+        if (!"/api/auth/login".equals(requestUri)) {
+            filterChain.doFilter(servletRequest, servletResponse);
+            return;
+        }
+
         String ip = httpRequest.getRemoteAddr();
         long now = System.currentTimeMillis();
 
