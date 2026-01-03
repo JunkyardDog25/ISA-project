@@ -1,12 +1,14 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { Toast } from 'bootstrap';
-import { verifyUser, resendVerificationCode } from '../services/UserService';
+import { useToast } from '@/composables/useToast.js';
+import { verifyUser, resendVerificationCode } from '@/services/UserService.js';
+import ToastContainer from '@/components/common/ToastContainer.vue';
 
 // Router
 const router = useRouter();
 const route = useRoute();
+const { showError, showSuccess } = useToast();
 
 // Form state
 const loading = ref(false);
@@ -19,10 +21,6 @@ const email = ref(route.query.email || '');
 const CODE_LENGTH = 6;
 const digits = ref(Array(CODE_LENGTH).fill(''));
 const digitRefs = ref([]);
-
-// Toast notifications
-const toasts = ref([]);
-let toastId = 0;
 
 // ----- Computed -----
 
@@ -94,32 +92,6 @@ function clearDigits() {
   nextTick(() => {
     digitRefs.value[0]?.focus();
   });
-}
-
-// ----- Toast Notifications -----
-
-function showToast(message, type = 'error') {
-  const id = ++toastId;
-  toasts.value.push({ id, message, type });
-
-  nextTick(() => {
-    const toastEl = document.getElementById(`toast-${id}`);
-    if (toastEl) {
-      const toast = new Toast(toastEl, { delay: 5000 });
-      toast.show();
-      toastEl.addEventListener('hidden.bs.toast', () => {
-        toasts.value = toasts.value.filter((t) => t.id !== id);
-      });
-    }
-  });
-}
-
-function showError(message) {
-  showToast(message, 'error');
-}
-
-function showSuccess(message) {
-  showToast(message, 'success');
 }
 
 // ----- Form Submission -----
@@ -260,34 +232,7 @@ function handleResendError(e) {
     </div>
 
     <!-- Toast Container -->
-    <div class="toast-container position-fixed top-0 end-0 p-3">
-      <div
-        v-for="toast in toasts"
-        :key="toast.id"
-        :id="`toast-${toast.id}`"
-        class="toast"
-        :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'"
-        role="alert"
-        aria-live="assertive"
-        aria-atomic="true"
-      >
-        <div
-          class="toast-header"
-          :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'"
-        >
-          <strong class="me-auto">
-            {{ toast.type === 'success' ? '✓ Success' : '✕ Error' }}
-          </strong>
-          <button
-            type="button"
-            class="btn-close btn-close-white"
-            data-bs-dismiss="toast"
-            aria-label="Close"
-          ></button>
-        </div>
-        <div class="toast-body">{{ toast.message }}</div>
-      </div>
-    </div>
+    <ToastContainer />
   </div>
 </template>
 
