@@ -1,12 +1,25 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { registerUser } from '../services/UserService';
 import { Toast } from 'bootstrap';
+import { registerUser } from '../services/UserService';
+import PasswordInput from '@/components/common/PasswordInput.vue';
 
+// Router
 const router = useRouter();
 
+// Form state
 const loading = ref(false);
+
+const form = ref({
+  username: '',
+  email: '',
+  firstName: '',
+  lastName: '',
+  address: '',
+  password: '',
+  passwordConfirm: ''
+});
 
 // Track which fields have been touched (blurred)
 const touched = ref({
@@ -16,9 +29,40 @@ const touched = ref({
   passwordConfirm: false
 });
 
-// Toast notifications (for API errors only)
+// Toast notifications
 const toasts = ref([]);
 let toastId = 0;
+
+// ----- Validation -----
+
+const errors = computed(() => ({
+  username: !form.value.username ? 'Username is required.' : '',
+  email: !form.value.email
+    ? 'Email is required.'
+    : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.value.email)
+      ? 'Please enter a valid email.'
+      : '',
+  password: !form.value.password
+    ? 'Password is required.'
+    : form.value.password.length < 8
+      ? 'Password must be at least 8 characters.'
+      : '',
+  passwordConfirm: !form.value.passwordConfirm
+    ? 'Please confirm your password.'
+    : form.value.password !== form.value.passwordConfirm
+      ? 'Passwords do not match.'
+      : ''
+}));
+
+const isFormValid = computed(
+  () =>
+    !errors.value.username &&
+    !errors.value.email &&
+    !errors.value.password &&
+    !errors.value.passwordConfirm
+);
+
+// ----- Toast Notifications -----
 
 function showToast(message, type = 'error') {
   const id = ++toastId;
@@ -29,9 +73,8 @@ function showToast(message, type = 'error') {
     if (toastEl) {
       const toast = new Toast(toastEl, { delay: 5000 });
       toast.show();
-
       toastEl.addEventListener('hidden.bs.toast', () => {
-        toasts.value = toasts.value.filter(t => t.id !== id);
+        toasts.value = toasts.value.filter((t) => t.id !== id);
       });
     }
   });
@@ -45,34 +88,7 @@ function showSuccess(message) {
   showToast(message, 'success');
 }
 
-const form = ref({
-  username: '',
-  email: '',
-  firstName: '',
-  lastName: '',
-  address: '',
-  password: '',
-  passwordConfirm: ''
-});
-
-// Live validation errors
-const errors = computed(() => ({
-  username: !form.value.username ? 'Username is required.' : '',
-  email: !form.value.email ? 'Email is required.' :
-         !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.value.email) ? 'Please enter a valid email.' : '',
-  password: !form.value.password ? 'Password is required.' :
-            form.value.password.length < 8 ? 'Password must be at least 8 characters.' : '',
-  passwordConfirm: !form.value.passwordConfirm ? 'Please confirm your password.' :
-                   form.value.password !== form.value.passwordConfirm ? 'Passwords do not match.' : ''
-}));
-
-// Check if form is valid
-const isFormValid = computed(() =>
-  !errors.value.username &&
-  !errors.value.email &&
-  !errors.value.password &&
-  !errors.value.passwordConfirm
-);
+// ----- Form Submission -----
 
 function markAllTouched() {
   touched.value.username = true;
@@ -86,6 +102,7 @@ async function onSubmit() {
   if (!isFormValid.value) return;
 
   loading.value = true;
+
   try {
     const payload = {
       username: form.value.username,
@@ -98,19 +115,25 @@ async function onSubmit() {
 
     await registerUser(payload);
     showSuccess('Registration successful! Please verify your email.');
+
     setTimeout(() => {
       router.push({ path: '/verify', query: { email: form.value.email } });
     }, 1500);
   } catch (e) {
-    showError(
-      e?.response?.data?.message ||
-      e?.response?.statusText ||
-      e?.message ||
-      'Registration failed.'
-    );
+    handleRegistrationError(e);
   } finally {
     loading.value = false;
   }
+}
+
+function handleRegistrationError(e) {
+  const serverMessage = e?.response?.data?.message;
+  showError(
+    serverMessage ||
+      e?.response?.statusText ||
+      e?.message ||
+      'Registration failed.'
+  );
 }
 </script>
 
@@ -121,21 +144,27 @@ async function onSubmit() {
       <p class="subtitle">Join us today and get started.</p>
 
       <form @submit.prevent="onSubmit" novalidate>
+        <!-- Username -->
         <div class="form-group">
-          <label>Username</label>
+          <label for="username">Username</label>
           <input
+            id="username"
             v-model="form.username"
             required
             placeholder="Enter your username"
             :class="{ 'input-error': touched.username && errors.username }"
             @blur="touched.username = true"
           />
-          <span v-if="touched.username && errors.username" class="error-text">{{ errors.username }}</span>
+          <span v-if="touched.username && errors.username" class="error-text">
+            {{ errors.username }}
+          </span>
         </div>
 
+        <!-- Email -->
         <div class="form-group">
-          <label>Email</label>
+          <label for="email">Email</label>
           <input
+            id="email"
             v-model="form.email"
             type="email"
             required
@@ -143,65 +172,92 @@ async function onSubmit() {
             :class="{ 'input-error': touched.email && errors.email }"
             @blur="touched.email = true"
           />
-          <span v-if="touched.email && errors.email" class="error-text">{{ errors.email }}</span>
+          <span v-if="touched.email && errors.email" class="error-text">
+            {{ errors.email }}
+          </span>
         </div>
 
+        <!-- Name grid -->
         <div class="name-grid">
           <div class="form-group">
-            <label>First name</label>
-            <input v-model="form.firstName" placeholder="First name" />
+            <label for="firstName">First name</label>
+            <input
+              id="firstName"
+              v-model="form.firstName"
+              placeholder="First name"
+            />
           </div>
 
           <div class="form-group">
-            <label>Last name</label>
-            <input v-model="form.lastName" placeholder="Last name" />
+            <label for="lastName">Last name</label>
+            <input
+              id="lastName"
+              v-model="form.lastName"
+              placeholder="Last name"
+            />
           </div>
         </div>
 
+        <!-- Address -->
         <div class="form-group">
-          <label>Address</label>
-          <input v-model="form.address" placeholder="Enter your address" />
+          <label for="address">Address</label>
+          <input
+            id="address"
+            v-model="form.address"
+            placeholder="Enter your address"
+          />
         </div>
 
+        <!-- Password -->
         <div class="form-group">
-          <label>Password</label>
-          <input
+          <label for="password">Password</label>
+          <PasswordInput
+            id="password"
             v-model="form.password"
-            type="password"
-            required
-            minlength="8"
             placeholder="Create a password"
             :class="{ 'input-error': touched.password && errors.password }"
             @blur="touched.password = true"
           />
-          <span v-if="touched.password && errors.password" class="error-text">{{ errors.password }}</span>
+          <span v-if="touched.password && errors.password" class="error-text">
+            {{ errors.password }}
+          </span>
         </div>
 
+        <!-- Confirm Password -->
         <div class="form-group">
-          <label>Confirm password</label>
-          <input
+          <label for="passwordConfirm">Confirm password</label>
+          <PasswordInput
+            id="passwordConfirm"
             v-model="form.passwordConfirm"
-            type="password"
-            required
             placeholder="Confirm your password"
-            :class="{ 'input-error': touched.passwordConfirm && errors.passwordConfirm }"
+            :class="{
+              'input-error': touched.passwordConfirm && errors.passwordConfirm
+            }"
             @blur="touched.passwordConfirm = true"
           />
-          <span v-if="touched.passwordConfirm && errors.passwordConfirm" class="error-text">{{ errors.passwordConfirm }}</span>
+          <span
+            v-if="touched.passwordConfirm && errors.passwordConfirm"
+            class="error-text"
+          >
+            {{ errors.passwordConfirm }}
+          </span>
         </div>
 
+        <!-- Submit button -->
         <button type="submit" :disabled="loading" class="submit-btn">
           <span v-if="!loading">Create Account</span>
           <span v-else>Creating…</span>
         </button>
 
+        <!-- Footer -->
         <p class="footer-text">
-          Already have an account? <router-link to="/login" class="footer-link">Sign in</router-link>
+          Already have an account?
+          <router-link to="/login" class="footer-link">Sign in</router-link>
         </p>
       </form>
     </div>
 
-    <!-- Bootstrap Toast Container -->
+    <!-- Toast Container -->
     <div class="toast-container position-fixed top-0 end-0 p-3">
       <div
         v-for="toast in toasts"
@@ -213,19 +269,28 @@ async function onSubmit() {
         aria-live="assertive"
         aria-atomic="true"
       >
-        <div class="toast-header" :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'">
-          <strong class="me-auto">{{ toast.type === 'success' ? '✓ Success' : '✕ Error' }}</strong>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+        <div
+          class="toast-header"
+          :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'"
+        >
+          <strong class="me-auto">
+            {{ toast.type === 'success' ? '✓ Success' : '✕ Error' }}
+          </strong>
+          <button
+            type="button"
+            class="btn-close btn-close-white"
+            data-bs-dismiss="toast"
+            aria-label="Close"
+          ></button>
         </div>
-        <div class="toast-body">
-          {{ toast.message }}
-        </div>
+        <div class="toast-body">{{ toast.message }}</div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* Container */
 .register-container {
   min-height: 100vh;
   display: flex;
@@ -235,6 +300,7 @@ async function onSubmit() {
   background: #f8f8f8;
 }
 
+/* Card */
 .card {
   background: #fff;
   border-radius: 12px;
@@ -244,6 +310,7 @@ async function onSubmit() {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
+/* Typography */
 h2 {
   margin: 0 0 0.5rem;
   font-size: 1.5rem;
@@ -259,6 +326,7 @@ h2 {
   font-size: 0.95rem;
 }
 
+/* Form groups */
 .form-group {
   margin-bottom: 1rem;
   text-align: left;
@@ -272,6 +340,7 @@ h2 {
   font-size: 0.9rem;
 }
 
+/* Inputs */
 input {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -293,6 +362,7 @@ input::placeholder {
   color: #aaa;
 }
 
+/* Error state */
 .input-error {
   border-color: #ff4444 !important;
 }
@@ -308,12 +378,14 @@ input::placeholder {
   margin-top: 0.35rem;
 }
 
+/* Name grid */
 .name-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1rem;
 }
 
+/* Submit button */
 .submit-btn {
   width: 100%;
   padding: 0.875rem 1.5rem;
@@ -341,6 +413,7 @@ input::placeholder {
   cursor: not-allowed;
 }
 
+/* Footer */
 .footer-text {
   text-align: center;
   margin-top: 1.5rem;
