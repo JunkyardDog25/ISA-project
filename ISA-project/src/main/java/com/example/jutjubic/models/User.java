@@ -2,6 +2,7 @@ package com.example.jutjubic.models;
 
 import jakarta.persistence.*;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.jspecify.annotations.Nullable;
 import org.springframework.security.core.GrantedAuthority;
@@ -14,7 +15,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "users")
-@Getter @Setter
+@Getter @Setter @NoArgsConstructor
 public class User implements UserDetails {
     @Id
     @GeneratedValue(generator = "UUID")
@@ -56,8 +57,6 @@ public class User implements UserDetails {
 
     private boolean enabled;
 
-    public User() { }
-
     public User(String username, String password, String email, String firstName, String lastName, String address) {
         this.username = username;
         this.password = password;
@@ -65,6 +64,8 @@ public class User implements UserDetails {
         this.firstName = firstName;
         this.lastName = lastName;
         this.address = address;
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
     }
 
     @Override
