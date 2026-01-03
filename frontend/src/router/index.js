@@ -1,31 +1,59 @@
-import {createRouter, createWebHistory} from "vue-router";
+import { createRouter, createWebHistory } from 'vue-router';
 
-import UserRegistration from "../components/UserRegistration.vue";
-import Home from "../components/Home.vue";
-import UserLogin from "@/components/UserLogin.vue";
-import UserVerification from "@/components/UserVerification.vue";
-import { useAuth } from "@/composables/useAuth.js";
+import { useAuth } from '@/composables/useAuth.js';
+import Home from '@/components/Home.vue';
+import UserLogin from '@/components/UserLogin.vue';
+import UserRegistration from '@/components/UserRegistration.vue';
+import UserVerification from '@/components/UserVerification.vue';
+
+// ----- Route Definitions -----
+
+const routes = [
+  {
+    path: '/',
+    name: 'home',
+    component: Home
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: UserLogin,
+    meta: { guestOnly: true }
+  },
+  {
+    path: '/register',
+    name: 'register',
+    component: UserRegistration,
+    meta: { guestOnly: true }
+  },
+  {
+    path: '/verify',
+    name: 'verify',
+    component: UserVerification,
+    meta: { guestOnly: true }
+  }
+];
+
+// ----- Router Instance -----
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  routes: [
-    { path: "/", name: "home", component: Home },
-    { path: "/login", name: "login", component: UserLogin, meta: { guestOnly: true } },
-    { path: "/register", name: "register", component: UserRegistration, meta: { guestOnly: true } },
-    { path: "/verify", name: "verify", component: UserVerification, meta: { guestOnly: true } },
-  ]
-})
+  routes
+});
 
-// Navigation guard to redirect logged-in users away from auth pages
+// ----- Navigation Guards -----
+
+/**
+ * Redirect logged-in users away from guest-only pages (login, register, verify).
+ */
 router.beforeEach((to, from, next) => {
   const { isLoggedIn } = useAuth();
 
   if (to.meta.guestOnly && isLoggedIn.value) {
-    // User is logged in, redirect to home
     next({ name: 'home' });
   } else {
     next();
   }
 });
 
-export default router
+export default router;

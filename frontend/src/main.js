@@ -1,8 +1,16 @@
-import './assets/main.css'
-import 'bootstrap/dist/css/bootstrap.min.css'
+// ----- Styles -----
 
-import { createApp } from 'vue'
-import App from './App.vue'
-import router from "@/router/index.js";
+import './assets/main.css';
+import 'bootstrap/dist/css/bootstrap.min.css';
+import 'bootstrap/dist/js/bootstrap.bundle.min.js';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 
-createApp(App).use(router).mount('#app')
+// ----- Vue App -----
+
+import { createApp } from 'vue';
+import App from './App.vue';
+import router from '@/router/index.js';
+
+// ----- Create and Mount App -----
+
+createApp(App).use(router).mount('#app');

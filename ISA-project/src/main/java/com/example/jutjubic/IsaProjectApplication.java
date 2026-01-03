@@ -1,7 +1,10 @@
 package com.example.jutjubic;
 
+import com.example.jutjubic.config.RateLimitingFilter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
 
 @SpringBootApplication
 public class IsaProjectApplication {
@@ -10,4 +13,11 @@ public class IsaProjectApplication {
         SpringApplication.run(IsaProjectApplication.class, args);
     }
 
+    @Bean
+    public FilterRegistrationBean<RateLimitingFilter> rateLimitingFilterFilter() {
+        FilterRegistrationBean<RateLimitingFilter> registrationBean = new FilterRegistrationBean<>();
+        registrationBean.setFilter(new RateLimitingFilter());
+        registrationBean.addUrlPatterns("/api/auth.login");
+        return registrationBean;
+    }
 }
