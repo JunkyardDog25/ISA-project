@@ -1,12 +1,15 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { getVideoById, toggleLike, getLikeStatus, incrementViewCount } from '@/services/VideoService.js';
+import { getCommentsByVideoId, createComment } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
+import { useToast } from '@/composables/useToast.js';
 
 const route = useRoute();
 const router = useRouter();
 const { isLoggedIn, user } = useAuth();
+const { showSuccess, showError } = useToast();
 
 // ----- State -----
 
@@ -16,6 +19,11 @@ const video = ref(null);
 const isLiked = ref(false);
 const likeCount = ref(0);
 const isDescriptionExpanded = ref(false);
+const comments = ref([]);
+const commentsLoading = ref(false);
+const newComment = ref('');
+const isSubmittingComment = ref(false);
+const isCommentFocused = ref(false);
 
 // ----- Computed -----
 
@@ -51,6 +59,9 @@ async function fetchVideo() {
       // Just get the like count for non-logged-in users
       likeCount.value = video.value.likeCount || 0;
     }
+
+    // Fetch comments for the video
+    await fetchComments();
   } catch (e) {
     error.value = e?.response?.data?.message || e?.message || 'Failed to load video';
     console.error('Error fetching video:', e);
@@ -78,6 +89,55 @@ async function fetchLikeStatus() {
   } catch (e) {
     console.error('Error fetching like status:', e);
     likeCount.value = video.value?.likeCount || 0;
+  }
+}
+
+async function fetchComments() {
+  commentsLoading.value = true;
+  try {
+    const response = await getCommentsByVideoId(videoId.value);
+    comments.value = response.data;
+  } catch (e) {
+    console.error('Error fetching comments:', e);
+    comments.value = [];
+  } finally {
+    commentsLoading.value = false;
+  }
+}
+
+async function handleSubmitComment() {
+  if (!isLoggedIn.value || !user.value?.id) {
+    showError('Please log in to comment');
+    return;
+  }
+
+  if (!newComment.value.trim()) {
+    return;
+  }
+
+  isSubmittingComment.value = true;
+  try {
+    const commentData = {
+      userId: user.value.id,
+      content: newComment.value.trim()
+    };
+    await createComment(videoId.value, commentData);
+    newComment.value = '';
+    isCommentFocused.value = false;
+    showSuccess('Comment added successfully');
+    await fetchComments();
+  } catch (e) {
+    console.error('Error adding comment:', e);
+    showError('Failed to add comment');
+  } finally {
+    isSubmittingComment.value = false;
+  }
+}
+
+function handleCommentBlur(event) {
+  if (!newComment.value) {
+    isCommentFocused.value = false;
+    event.target.rows = 1;
   }
 }
 
@@ -240,6 +300,77 @@ onMounted(() => {
           <span class="expand-btn">
             {{ isDescriptionExpanded ? 'Show less' : '...more' }}
           </span>
+        </div>
+
+        <!-- Comments Section -->
+        <div class="comments-section">
+          <h2 class="comments-header">{{ comments.length }} Comments</h2>
+
+          <!-- Add Comment Form -->
+          <div v-if="isLoggedIn" class="add-comment-form">
+            <div class="comment-avatar">
+              {{ user?.username?.charAt(0)?.toUpperCase() || '?' }}
+            </div>
+            <div class="comment-input-wrapper">
+              <textarea
+                v-model="newComment"
+                class="comment-input"
+                placeholder="Add a comment..."
+                rows="1"
+                @focus="isCommentFocused = true; $event.target.rows = 3"
+                @blur="handleCommentBlur($event)"
+                @keydown.enter.ctrl="handleSubmitComment"
+              ></textarea>
+              <div v-if="isCommentFocused || newComment" class="comment-actions">
+                <button
+                  class="cancel-btn"
+                  @click="newComment = ''; isCommentFocused = false"
+                  :disabled="isSubmittingComment"
+                >
+                  Cancel
+                </button>
+                <button
+                  class="submit-btn"
+                  @click="handleSubmitComment"
+                  :disabled="!newComment.trim() || isSubmittingComment"
+                >
+                  {{ isSubmittingComment ? 'Posting...' : 'Comment' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Login prompt for non-logged in users -->
+          <div v-else class="login-prompt">
+            <p>Please <RouterLink to="/login">sign in</RouterLink> to add a comment.</p>
+          </div>
+
+          <!-- Comments Loading -->
+          <div v-if="commentsLoading" class="comments-loading">
+            <div class="spinner-small"></div>
+            <span>Loading comments...</span>
+          </div>
+
+          <!-- Comments List -->
+          <div v-else-if="comments.length > 0" class="comments-list">
+            <div v-for="comment in comments" :key="comment.id" class="comment-item">
+              <div class="comment-avatar">
+                {{ comment.username?.charAt(0)?.toUpperCase() || '?' }}
+              </div>
+              <div class="comment-content">
+                <div class="comment-header">
+                  <span class="comment-author">{{ comment.username || 'Unknown User' }}</span>
+                  <span class="comment-date">{{ formatRelativeDate(comment.createdAt) }}</span>
+                </div>
+                <p class="comment-text">{{ comment.content }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- No Comments -->
+          <div v-else class="no-comments">
+            <p>No comments yet. Be the first to comment!</p>
+          </div>
         </div>
       </div>
     </div>
@@ -493,6 +624,199 @@ onMounted(() => {
 
 .expand-btn:hover {
   color: #111;
+}
+
+/* Comments Section */
+.comments-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e5e5e5;
+}
+
+.comments-header {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 1.5rem;
+  color: #111;
+}
+
+/* Add Comment Form */
+.add-comment-form {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.comment-input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.comment-input {
+  width: 100%;
+  padding: 0.5rem 0;
+  border: none;
+  border-bottom: 1px solid #ccc;
+  background: transparent;
+  font-size: 0.875rem;
+  color: #111;
+  resize: none;
+  transition: border-color 0.2s;
+}
+
+.comment-input:focus {
+  outline: none;
+  border-bottom: 2px solid #111;
+}
+
+.comment-input::placeholder {
+  color: #666;
+}
+
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.cancel-btn,
+.submit-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 18px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cancel-btn {
+  background: transparent;
+  color: #606060;
+}
+
+.cancel-btn:hover:not(:disabled) {
+  background: #e5e5e5;
+}
+
+.cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.submit-btn {
+  background: #cc0000;
+  color: #fff;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: #990000;
+}
+
+.submit-btn:disabled {
+  background: #ccc;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.login-prompt {
+  padding: 1rem;
+  background: #f0f0f0;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.login-prompt a {
+  color: #cc0000;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.login-prompt a:hover {
+  text-decoration: underline;
+}
+
+.comments-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.spinner-small {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #eee;
+  border-top-color: #ff0000;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.comment-item {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.comment-avatar {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.comment-content {
+  flex: 1;
+}
+
+.comment-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.comment-author {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.comment-date {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.comment-text {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #333;
+  line-height: 1.4;
+}
+
+.no-comments {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: #666;
+  font-size: 0.9rem;
 }
 
 /* Responsive */
