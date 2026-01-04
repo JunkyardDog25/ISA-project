@@ -2,7 +2,6 @@ package com.example.jutjubic.models;
 
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -13,7 +12,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "comments")
-@NoArgsConstructor @AllArgsConstructor
+@NoArgsConstructor
 @Getter @Setter
 public class Comment {
     @Id
@@ -35,4 +34,11 @@ public class Comment {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    public Comment(User user, Video video, String content) {
+        this.user = user;
+        this.video = video;
+        this.content = content;
+        this.createdAt = LocalDateTime.now();
+    }
 }
