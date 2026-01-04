@@ -5,6 +5,7 @@ import { getVideoById, toggleLike, getLikeStatus, incrementViewCount } from '@/s
 import { getCommentsByVideoId, createComment } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
+import CustomVideoPlayer from '@/components/common/CustomVideoPlayer.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -24,6 +25,10 @@ const commentsLoading = ref(false);
 const newComment = ref('');
 const isSubmittingComment = ref(false);
 const isCommentFocused = ref(false);
+
+// ----- Video Player State -----
+const videoRef = ref(null);
+const videoControlsRef = ref(null);
 
 // ----- Computed -----
 
@@ -242,16 +247,27 @@ onMounted(() => {
     <!-- Video Content -->
     <div v-else-if="video" class="video-content">
       <!-- Video Player -->
-      <div class="video-player-container">
+      <div
+        class="video-player-container"
+        @mousemove="videoControlsRef?.handleMouseMove()"
+        @mouseleave="videoControlsRef?.handleMouseLeave()"
+      >
         <video
+          ref="videoRef"
           class="video-player"
-          controls
           autoplay
           :poster="thumbnailUrl"
+          @click="videoControlsRef?.togglePlay()"
         >
           <source :src="videoUrl" type="video/mp4" />
           Your browser does not support the video tag.
         </video>
+
+        <!-- Video Controls Component -->
+        <CustomVideoPlayer
+          ref="videoControlsRef"
+          :video-ref="videoRef"
+        />
       </div>
 
       <!-- Video Info Section -->
@@ -453,12 +469,24 @@ onMounted(() => {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  position: relative;
 }
 
 .video-player {
   width: 100%;
   aspect-ratio: 16 / 9;
   display: block;
+  cursor: pointer;
+}
+
+/* Fullscreen styles */
+.video-player-container:fullscreen {
+  border-radius: 0;
+}
+
+.video-player-container:fullscreen .video-player {
+  height: 100vh;
+  aspect-ratio: unset;
 }
 
 /* Video Info */
