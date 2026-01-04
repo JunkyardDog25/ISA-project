@@ -2,10 +2,13 @@
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useAuth } from "@/composables/useAuth.js";
+import { useToast } from "@/composables/useToast.js";
+import ToastContainer from "@/components/common/ToastContainer.vue";
 
 const route = useRoute();
 const router = useRouter();
 const { isLoggedIn, logout, user } = useAuth();
+const { showSuccess } = useToast();
 
 // Dropdown state
 const dropdownOpen = ref(false);
@@ -27,7 +30,8 @@ function closeDropdown() {
 function handleLogout() {
   closeDropdown();
   logout();
-  router.push('/login');
+  showSuccess('You have been logged out successfully');
+  router.push('/');
 }
 
 // Close dropdown when clicking outside
@@ -88,6 +92,8 @@ onUnmounted(() => {
   <main>
     <RouterView />
   </main>
+
+  <ToastContainer />
 </template>
 
 <style scoped>
