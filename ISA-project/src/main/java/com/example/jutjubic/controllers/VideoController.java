@@ -1,5 +1,7 @@
 package com.example.jutjubic.controllers;
 
+import com.example.jutjubic.dto.LikeDto;
+import com.example.jutjubic.dto.LikeResponseDto;
 import com.example.jutjubic.dto.VideoDto;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.services.VideoService;
@@ -37,5 +39,26 @@ class VideoController {
     public ResponseEntity<Video> getVideoById(@PathVariable UUID id) {
         Video video = videoService.getVideoById(id);
         return ResponseEntity.ok(video);
+    }
+
+    @PostMapping("/{videoId}/like")
+    public ResponseEntity<LikeResponseDto> toggleLike(@RequestBody LikeDto likeDto, @PathVariable UUID videoId) {
+        LikeResponseDto response = videoService.toggleLike(videoId, likeDto.getUserId());
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{videoId}/like")
+    public ResponseEntity<LikeResponseDto> getLikeStatus(
+            @PathVariable UUID videoId,
+            @RequestParam UUID userId
+    ) {
+        LikeResponseDto response = videoService.getLikeStatus(videoId, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{videoId}/likes/count")
+    public ResponseEntity<Long> getLikeCount(@PathVariable UUID videoId) {
+        long count = videoService.getLikeCount(videoId);
+        return ResponseEntity.ok(count);
     }
 }

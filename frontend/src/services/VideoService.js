@@ -50,4 +50,33 @@ export function createVideo(videoData) {
   return api.post('/api/videos/create', videoData);
 }
 
+/**
+ * Toggle like on a video.
+ * @param {string} videoId - Video UUID
+ * @param {string} userId - User UUID
+ * @returns {Promise} - Axios response promise with { liked: boolean, likeCount: number }
+ */
+export function toggleLike(videoId, userId) {
+  return api.post(`/api/videos/${videoId}/like`, { userId });
+}
 
+/**
+ * Get like status for a video.
+ * @param {string} videoId - Video UUID
+ * @param {string} userId - User UUID
+ * @returns {Promise} - Axios response promise with { liked: boolean, likeCount: number }
+ */
+export function getLikeStatus(videoId, userId) {
+  return api.get(`/api/videos/${videoId}/like`, {
+    params: { userId }
+  });
+}
+
+/**
+ * Get like count for a video.
+ * @param {string} videoId - Video UUID
+ * @returns {Promise} - Axios response promise with like count
+ */
+export function getLikeCount(videoId) {
+  return api.get(`/api/videos/${videoId}/likes/count`);
+}

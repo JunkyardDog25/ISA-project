@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getVideoById } from '@/services/VideoService.js';
+import { getVideoById, toggleLike, getLikeStatus } from '@/services/VideoService.js';
 import { useAuth } from '@/composables/useAuth.js';
 
 const route = useRoute();
@@ -14,6 +14,7 @@ const loading = ref(true);
 const error = ref(null);
 const video = ref(null);
 const isLiked = ref(false);
+const likeCount = ref(0);
 const isDescriptionExpanded = ref(false);
 
 // ----- Computed -----
@@ -39,6 +40,14 @@ async function fetchVideo() {
   try {
     const response = await getVideoById(videoId.value);
     video.value = response.data;
+
+    // Fetch like status if user is logged in
+    if (isLoggedIn.value && user.value?.id) {
+      await fetchLikeStatus();
+    } else {
+      // Just get the like count for non-logged-in users
+      likeCount.value = video.value.likeCount || 0;
+    }
   } catch (e) {
     error.value = e?.response?.data?.message || e?.message || 'Failed to load video';
     console.error('Error fetching video:', e);
@@ -47,10 +56,33 @@ async function fetchVideo() {
   }
 }
 
+async function fetchLikeStatus() {
+  try {
+    const response = await getLikeStatus(videoId.value, user.value.id);
+    isLiked.value = response.data.liked;
+    likeCount.value = response.data.likeCount;
+  } catch (e) {
+    console.error('Error fetching like status:', e);
+    likeCount.value = video.value?.likeCount || 0;
+  }
+}
+
 // ----- Actions -----
 
-function toggleLike() {
-  isLiked.value = !isLiked.value;
+async function handleToggleLike() {
+  if (!isLoggedIn.value || !user.value?.id) {
+    // Optionally redirect to login or show a message
+    console.warn('User must be logged in to like videos');
+    return;
+  }
+
+  try {
+    const response = await toggleLike(videoId.value, user.value.id);
+    isLiked.value = response.data.liked;
+    likeCount.value = response.data.likeCount;
+  } catch (e) {
+    console.error('Error toggling like:', e);
+  }
 }
 
 function toggleDescription() {
@@ -61,13 +93,8 @@ function toggleDescription() {
 
 function formatViews(count) {
   if (!count) return '0 views';
-  if (count >= 1000000) {
-    return `${(count / 1000000).toFixed(1)}M views`;
-  }
-  if (count >= 1000) {
-    return `${Math.floor(count / 1000)}K views`;
-  }
-  return `${count} views`;
+  const formatted = count.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${formatted} views`;
 }
 
 function formatLikes(count) {
@@ -96,9 +123,15 @@ function formatRelativeDate(dateString) {
   const date = new Date(dateString);
   const now = new Date();
   const diffMs = now - date;
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  if (diffDays === 0) return 'today';
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes === 1) return '1 minute ago';
+  if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+  if (diffHours === 1) return '1 hour ago';
+  if (diffHours < 24) return `${diffHours} hours ago`;
   if (diffDays === 1) return 'yesterday';
   if (diffDays < 7) return `${diffDays} days ago`;
   if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
@@ -170,12 +203,14 @@ onMounted(() => {
             <button
               class="action-btn like-btn"
               :class="{ active: isLiked }"
-              @click="toggleLike"
+              @click="handleToggleLike"
+              :disabled="!isLoggedIn"
+              :title="isLoggedIn ? (isLiked ? 'Unlike' : 'Like') : 'Login to like'"
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/>
               </svg>
-              <span>{{ formatLikes(video.likeCount || 134000) }}</span>
+              <span>{{ formatLikes(likeCount) }}</span>
             </button>
           </div>
         </div>
@@ -185,7 +220,7 @@ onMounted(() => {
           <div class="description-header">
             <span class="view-count">{{ formatViews(video.viewCount) }}</span>
             <span class="meta-separator">•</span>
-            <span class="upload-date">{{ formatRelativeDate(video.createdAt) }}</span>
+            <span class="upload-date">{{ isDescriptionExpanded ? formatDate(video.createdAt) : formatRelativeDate(video.createdAt) }}</span>
           </div>
           <p class="description-text">{{ video.description || 'No description available.' }}</p>
           <span class="expand-btn">
@@ -373,6 +408,15 @@ onMounted(() => {
 
 .action-btn.active:hover {
   background: #cc0000;
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.action-btn:disabled:hover {
+  background: #e5e5e5;
 }
 
 .like-btn {
