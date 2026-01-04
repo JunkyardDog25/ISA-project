@@ -103,25 +103,31 @@ $videos = @(
     }
 )
 
+# Array of thumbnail numbers (1 to 7)
+$thumbnailNumbers = 1..7
+
 # Counter for tracking
 $count = 0
 
 foreach ($video in $videos) {
     $count++
 
+    # Pick a random thumbnail number from the array
+    $thumbNum = $thumbnailNumbers | Get-Random
+
     # Create the request body
     $body = @{
         title = $video.title
         description = $video.description
-        videoPath = "static/videos/video$count.mp4"
-        thumbnailPath = "static/thumbnails/thumb$count.jpg"
-        thumbnailCompressedPath = "static/thumbnails/thumb${count}_compressed.jpg"
+        videoPath = "videos/video1.mp4"
+        thumbnailPath = "thumbnails/thumb$thumbNum.jpg"
+        thumbnailCompressedPath = "thumbnails/thumb${thumbNum}_compressed.jpg"
         fileSize = Get-Random -Minimum 5000000 -Maximum 500000000
         duration = "{0:D2}:{1:D2}:{2:D2}" -f (Get-Random -Minimum 0 -Maximum 2), (Get-Random -Minimum 10 -Maximum 59), (Get-Random -Minimum 0 -Maximum 59)
-        transcoded = $true
+        transcoded = $false
         scheduledAt = $null
         country = @("Serbia", "USA", "Germany", "UK", "France", "Canada")[(Get-Random -Minimum 0 -Maximum 6)]
-        viewCount = Get-Random -Minimum 10000 -Maximum 500000
+        viewCount = 0
         user = $user
     } | ConvertTo-Json -Depth 3
 
