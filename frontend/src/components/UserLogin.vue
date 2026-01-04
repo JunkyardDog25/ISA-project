@@ -119,9 +119,9 @@ async function onSubmit() {
     }
 
     // Store user data
-    if (data.username || data.email) {
+    if (data.id || data.username || data.email) {
       setUser(
-        { username: data.username, email: data.email },
+        { id: data.id, username: data.username, email: data.email },
         form.value.remember
       );
     }
