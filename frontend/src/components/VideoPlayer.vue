@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getVideoById, toggleLike, getLikeStatus } from '@/services/VideoService.js';
+import { getVideoById, toggleLike, getLikeStatus, incrementViewCount } from '@/services/VideoService.js';
 import { useAuth } from '@/composables/useAuth.js';
 
 const route = useRoute();
@@ -41,6 +41,9 @@ async function fetchVideo() {
     const response = await getVideoById(videoId.value);
     video.value = response.data;
 
+    // Increment view count
+    await incrementViews();
+
     // Fetch like status if user is logged in
     if (isLoggedIn.value && user.value?.id) {
       await fetchLikeStatus();
@@ -53,6 +56,17 @@ async function fetchVideo() {
     console.error('Error fetching video:', e);
   } finally {
     loading.value = false;
+  }
+}
+
+async function incrementViews() {
+  try {
+    const response = await incrementViewCount(videoId.value);
+    if (response.data?.views !== undefined) {
+      video.value.viewCount = response.data.views;
+    }
+  } catch (e) {
+    console.error('Error incrementing view count:', e);
   }
 }
 

@@ -80,3 +80,12 @@ export function getLikeStatus(videoId, userId) {
 export function getLikeCount(videoId) {
   return api.get(`/api/videos/${videoId}/likes/count`);
 }
+
+/**
+ * Increment video view count.
+ * @param {string} videoId - Video UUID
+ * @returns {Promise} - Axios response promise
+ */
+export function incrementViewCount(videoId) {
+  return api.put(`/api/videos/${videoId}/views`);
+}

@@ -3,6 +3,7 @@ package com.example.jutjubic.controllers;
 import com.example.jutjubic.dto.LikeDto;
 import com.example.jutjubic.dto.LikeResponseDto;
 import com.example.jutjubic.dto.VideoDto;
+import com.example.jutjubic.dto.ViewResponseDto;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.services.VideoService;
 import com.example.jutjubic.utils.PageResponse;
@@ -60,5 +61,11 @@ class VideoController {
     public ResponseEntity<Long> getLikeCount(@PathVariable UUID videoId) {
         long count = videoService.getLikeCount(videoId);
         return ResponseEntity.ok(count);
+    }
+
+    @PutMapping("/{videoId}/views")
+    public ResponseEntity<ViewResponseDto> incrementViews(@PathVariable UUID videoId) {
+        ViewResponseDto response = videoService.incrementViews(videoId);
+        return ResponseEntity.ok(response);
     }
 }
