@@ -6,6 +6,7 @@ import UserLogin from '@/components/UserLogin.vue';
 import UserRegistration from '@/components/UserRegistration.vue';
 import UserVerification from '@/components/UserVerification.vue';
 import VideoPlayer from '@/components/VideoPlayer.vue';
+import UserProfile from '@/components/UserProfile.vue';
 
 // ----- Route Definitions -----
 
@@ -19,6 +20,11 @@ const routes = [
     path: '/video/:id',
     name: 'video',
     component: VideoPlayer
+  },
+  {
+    path: '/user/:id',
+    name: 'user-profile',
+    component: UserProfile
   },
   {
     path: '/login',

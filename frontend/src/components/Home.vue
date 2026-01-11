@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
 import { getVideosPaginated } from '@/services/VideoService.js';
 
@@ -42,6 +42,13 @@ async function fetchVideos() {
     const response = await getVideosPaginated(currentPage.value - 1, videosPerPage);
     const data = response.data;
 
+    // Zaštita ako data.content nije definisan
+    if (!data || !data.content) {
+      console.error('Invalid API response:', data);
+      error.value = 'Invalid response from server';
+      return;
+    }
+
     // Map API response to display format
     videos.value = data.content.map(video => ({
       id: video.id,
@@ -49,6 +56,7 @@ async function fetchVideos() {
       description: video.description,
       thumbnail: `http://localhost:8080/${video.thumbnailPath}`,
       channel: video.creator?.username || 'Unknown',
+      creatorId: video.creator?.id || null,
       views: formatViews(video.viewCount),
       uploadedAt: formatDate(video.createdAt),
       duration: video.duration
@@ -237,7 +245,15 @@ const pageNumbers = computed(() => {
           <div class="video-info">
             <h3 class="video-title">{{ video.title }}</h3>
             <div class="video-meta">
-              <span class="channel-name">{{ video.channel }}</span>
+              <RouterLink
+                v-if="video.creatorId"
+                :to="{ name: 'user-profile', params: { id: video.creatorId } }"
+                class="channel-name-link"
+                @click.stop
+              >
+                {{ video.channel }}
+              </RouterLink>
+              <span v-else class="channel-name">{{ video.channel }}</span>
               <span class="meta-separator">•</span>
               <span class="view-count">{{ video.views }}</span>
               <span class="meta-separator">•</span>
@@ -515,6 +531,18 @@ const pageNumbers = computed(() => {
 
 .channel-name:hover {
   text-decoration: underline;
+}
+
+.channel-name-link {
+  color: #ff0000;
+  font-weight: 500;
+  text-decoration: none;
+  transition: opacity 0.2s ease;
+}
+
+.channel-name-link:hover {
+  text-decoration: underline;
+  opacity: 0.8;
 }
 
 .meta-separator {
