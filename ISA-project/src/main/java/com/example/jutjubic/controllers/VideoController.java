@@ -24,16 +24,35 @@ class VideoController {
     }
 
     @PostMapping("/create")
-    public ResponseEntity<Video> createVideo(@RequestBody CreateVideoDto createVideoDto) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    public ResponseEntity<?> createVideo(@RequestBody CreateVideoDto createVideoDto) {
+        System.out.println("========================================");
+        System.out.println("POST /api/videos/create - CALLED");
+        System.out.println("Title: " + (createVideoDto != null ? createVideoDto.getTitle() : "NULL"));
+        System.out.println("========================================");
         
-        if (authentication == null || !authentication.isAuthenticated() || !(authentication.getPrincipal() instanceof User)) {
-            return ResponseEntity.status(401).build();
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            System.out.println("Authentication: " + (authentication != null ? "NOT NULL" : "NULL"));
+            
+            if (authentication == null || !authentication.isAuthenticated() || !(authentication.getPrincipal() instanceof User)) {
+                System.out.println("Authentication failed - returning 401");
+                return ResponseEntity.status(401).body("Unauthorized");
+            }
+            
+            User authenticatedUser = (User) authentication.getPrincipal();
+            System.out.println("User authenticated: " + authenticatedUser.getUsername() + " (ID: " + authenticatedUser.getId() + ")");
+            
+            System.out.println("Calling videoService.createVideo()...");
+            Video video = videoService.createVideo(createVideoDto, authenticatedUser);
+            System.out.println("Video created with ID: " + video.getId());
+            System.out.println("Returning video to client...");
+            
+            return ResponseEntity.ok(video);
+        } catch (Exception e) {
+            System.err.println("ERROR in createVideo controller: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).body("Error creating video: " + e.getMessage());
         }
-        
-        User authenticatedUser = (User) authentication.getPrincipal();
-        Video video = videoService.createVideo(createVideoDto, authenticatedUser);
-        return ResponseEntity.ok(video);
     }
 
     @GetMapping("/")
