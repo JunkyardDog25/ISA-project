@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount } from '@/services/VideoService.js';
-import { getCommentsByVideoId, createComment } from '@/services/CommentService.js';
+import { getCommentsByVideoId, createComment, getCommentLimitStatus } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
 import CustomVideoPlayer from '@/components/common/CustomVideoPlayer.vue';
@@ -25,6 +25,16 @@ const commentsLoading = ref(false);
 const newComment = ref('');
 const isSubmittingComment = ref(false);
 const isCommentFocused = ref(false);
+
+// ----- Comments Pagination State -----
+const commentsPage = ref(0);
+const commentsPageSize = 20;
+const totalComments = ref(0);
+const hasMoreComments = ref(false);
+const loadingMoreComments = ref(false);
+
+// ----- Comment Limit State -----
+const commentLimitInfo = ref(null);
 
 // ----- Video Player State -----
 const videoRef = ref(null);
@@ -67,6 +77,11 @@ async function fetchVideo() {
 
     // Fetch comments for the video
     await fetchComments();
+
+    // Fetch comment limit status for logged-in users
+    if (isLoggedIn.value && user.value?.id) {
+      await fetchCommentLimitStatus();
+    }
   } catch (e) {
     error.value = e?.response?.data?.message || e?.message || 'Failed to load video';
     console.error('Error fetching video:', e);
@@ -112,16 +127,62 @@ async function fetchLikeCount() {
   }
 }
 
-async function fetchComments() {
-  commentsLoading.value = true;
+async function fetchComments(loadMore = false) {
+  if (loadMore) {
+    loadingMoreComments.value = true;
+  } else {
+    commentsLoading.value = true;
+    commentsPage.value = 0;
+    comments.value = [];
+  }
+
   try {
-    const response = await getCommentsByVideoId(videoId.value);
-    comments.value = response.data;
+    const response = await getCommentsByVideoId(videoId.value, commentsPage.value, commentsPageSize);
+    const data = response.data;
+
+    if (loadMore) {
+      // Append new comments to existing list
+      comments.value = [...comments.value, ...data.content];
+    } else {
+      comments.value = data.content;
+    }
+
+    // Update pagination metadata
+    totalComments.value = data.totalElements;
+    hasMoreComments.value = !data.last;
+
   } catch (e) {
     console.error('Error fetching comments:', e);
-    comments.value = [];
+    if (!loadMore) {
+      comments.value = [];
+      totalComments.value = 0;
+    }
   } finally {
     commentsLoading.value = false;
+    loadingMoreComments.value = false;
+  }
+}
+
+/**
+ * Učitava više komentara (sledeća stranica).
+ */
+async function loadMoreComments() {
+  if (!hasMoreComments.value || loadingMoreComments.value) return;
+  commentsPage.value++;
+  await fetchComments(true);
+}
+
+/**
+ * Dobija informacije o ograničenju komentara za trenutnog korisnika.
+ */
+async function fetchCommentLimitStatus() {
+  if (!isLoggedIn.value || !user.value?.id) return;
+
+  try {
+    const response = await getCommentLimitStatus(user.value.id);
+    commentLimitInfo.value = response.data;
+  } catch (e) {
+    console.error('Error fetching comment limit status:', e);
   }
 }
 
@@ -145,11 +206,22 @@ async function handleSubmitComment() {
     newComment.value = '';
     isCommentFocused.value = false;
     showSuccess('Komentar je uspešno dodat');
+
+    // Refresh comments (reset to first page to see new comment)
     await fetchComments();
+
+    // Update comment limit status
+    await fetchCommentLimitStatus();
   } catch (e) {
     console.error('Error adding comment:', e);
     console.error('Response:', e?.response?.data);
-    if (e?.response?.status === 401 || e?.response?.status === 403) {
+
+    if (e?.response?.status === 429) {
+      // Comment limit exceeded
+      const errorData = e?.response?.data;
+      showError(errorData?.message || 'Prekoračili ste ograničenje od 60 komentara po satu');
+      await fetchCommentLimitStatus();
+    } else if (e?.response?.status === 401 || e?.response?.status === 403) {
       showError('Morate se prijaviti da biste komentarisali');
     } else {
       showError(e?.response?.data?.message || 'Greška pri dodavanju komentara');
@@ -362,7 +434,21 @@ onMounted(() => {
 
         <!-- Comments Section -->
         <div class="comments-section">
-          <h2 class="comments-header">{{ comments.length }} Comments</h2>
+          <h2 class="comments-header">{{ totalComments }} Comments</h2>
+
+          <!-- Comment Limit Info (for logged-in users) -->
+          <div v-if="isLoggedIn && commentLimitInfo" class="comment-limit-info">
+            <span class="limit-text">
+              {{ commentLimitInfo.remaining }} / {{ commentLimitInfo.limit }} komentara preostalo ovog sata
+            </span>
+            <div class="limit-bar">
+              <div
+                class="limit-bar-fill"
+                :style="{ width: `${(commentLimitInfo.used / commentLimitInfo.limit) * 100}%` }"
+                :class="{ 'limit-warning': commentLimitInfo.remaining <= 10, 'limit-danger': commentLimitInfo.remaining <= 0 }"
+              ></div>
+            </div>
+          </div>
 
           <!-- Add Comment Form -->
           <div v-if="isLoggedIn" class="add-comment-form">
@@ -444,6 +530,21 @@ onMounted(() => {
           <!-- No Comments -->
           <div v-else class="no-comments">
             <p>No comments yet. Be the first to comment!</p>
+          </div>
+
+          <!-- Load More Button -->
+          <div v-if="hasMoreComments && !commentsLoading" class="load-more-container">
+            <button
+              class="load-more-btn"
+              @click="loadMoreComments"
+              :disabled="loadingMoreComments"
+            >
+              <span v-if="loadingMoreComments">
+                <span class="spinner-small"></span>
+                Loading...
+              </span>
+              <span v-else>Load more comments</span>
+            </button>
           </div>
         </div>
       </div>
@@ -749,6 +850,43 @@ onMounted(() => {
   color: #111;
 }
 
+/* Comment Limit Info */
+.comment-limit-info {
+  background: #f5f5f5;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.limit-text {
+  font-size: 0.8rem;
+  color: #666;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.limit-bar {
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.limit-bar-fill {
+  height: 100%;
+  background: #4caf50;
+  border-radius: 2px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.limit-bar-fill.limit-warning {
+  background: #ff9800;
+}
+
+.limit-bar-fill.limit-danger {
+  background: #f44336;
+}
+
 /* Add Comment Form */
 .add-comment-form {
   display: flex;
@@ -947,6 +1085,44 @@ onMounted(() => {
   padding: 2rem 1rem;
   color: #666;
   font-size: 0.9rem;
+}
+
+/* Load More Button */
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
+
+.load-more-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  color: #333;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.load-more-btn:hover:not(:disabled) {
+  background: #e5e5e5;
+  border-color: #ccc;
+}
+
+.load-more-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.load-more-btn .spinner-small {
+  width: 16px;
+  height: 16px;
 }
 
 /* Responsive */
