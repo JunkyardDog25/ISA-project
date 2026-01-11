@@ -77,17 +77,17 @@ export function getVideoById(id) {
 export function createVideo(formData) {
   // Get token from localStorage or sessionStorage
   const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
-  
+
   const config = {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
   };
-  
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
-  
+
   return api.post('/api/videos/create', formData, config);
 }
 

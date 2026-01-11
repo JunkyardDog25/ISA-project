@@ -39,10 +39,10 @@ const touched = ref({
 const errors = computed(() => ({
   title: !form.value.title ? 'Title is required.' : '',
   tags: !form.value.tags || form.value.tags.trim() === '' ? 'Tags are required.' : '',
-  videoFile: !videoFile.value ? 'Video file is required.' : 
-    (!videoFile.value.name.toLowerCase().endsWith('.mp4') ? 'Video file must be in MP4 format.' : 
+  videoFile: !videoFile.value ? 'Video file is required.' :
+    (!videoFile.value.name.toLowerCase().endsWith('.mp4') ? 'Video file must be in MP4 format.' :
     (videoFile.value.size > MAX_VIDEO_SIZE ? `Video file size exceeds maximum allowed size of 200MB. Current size: ${formatFileSize(videoFile.value.size)}` : '')),
-  thumbnailFile: !thumbnailFile.value ? 'Thumbnail image is required.' : 
+  thumbnailFile: !thumbnailFile.value ? 'Thumbnail image is required.' :
     (!thumbnailFile.value.type.startsWith('image/') ? 'Thumbnail must be an image file.' : '')
 }));
 
@@ -158,6 +158,7 @@ function handleCreateError(e) {
           <label for="title">Title <span class="required">*</span></label>
           <input
             id="title"
+            type="text"
             v-model="form.title"
             required
             placeholder="Enter video title"
