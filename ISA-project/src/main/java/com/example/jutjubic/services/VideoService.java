@@ -141,12 +141,16 @@ public class VideoService {
     }
 
 
+    @Transactional
     public ViewResponseDto incrementViews(UUID videoId) {
+        int rowsUpdated = videoRepository.incrementViewCount(videoId);
+        
+        if (rowsUpdated == 0) {
+            throw new RuntimeException("Video not found");
+        }
+        
         Video video = videoRepository.findById(videoId)
                 .orElseThrow(() -> new RuntimeException("Video not found"));
-
-        video.setViewCount(video.getViewCount() + 1);
-        videoRepository.save(video);
 
         return new ViewResponseDto(true, video.getViewCount());
     }
