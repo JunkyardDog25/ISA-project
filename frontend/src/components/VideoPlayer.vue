@@ -41,7 +41,7 @@ const videoUrl = computed(() => {
 
 const thumbnailUrl = computed(() => {
   if (!video.value?.thumbnailPath) return '';
-  return `http://localhost:8080/${video.value.thumbnailPath}`;
+  return `http://localhost:8080/api/thumbnails/${video.value.thumbnailPath}`;
 });
 
 // ----- Fetch Video -----
