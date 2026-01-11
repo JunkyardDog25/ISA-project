@@ -15,7 +15,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.sql.Time;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,6 +30,9 @@ import java.util.UUID;
 public class VideoService {
     private static final Logger logger = LoggerFactory.getLogger(VideoService.class);
     private static final int MAX_PAGE_SIZE = 100;
+    private static final String STATIC_RESOURCES_PATH = "ISA-project/src/main/resources/static";
+    private static final String VIDEOS_DIR = "videos";
+    private static final String THUMBNAILS_DIR = "thumbnails";
 
     private final VideoRepository videoRepository;
     private final UserService userService;
@@ -31,6 +40,17 @@ public class VideoService {
     public VideoService(VideoRepository videoRepository, UserService userService) {
         this.videoRepository = videoRepository;
         this.userService = userService;
+        
+        // Ensure directories exist
+        try {
+            Path videosPath = Paths.get(STATIC_RESOURCES_PATH, VIDEOS_DIR);
+            Path thumbnailsPath = Paths.get(STATIC_RESOURCES_PATH, THUMBNAILS_DIR);
+            Files.createDirectories(videosPath);
+            Files.createDirectories(thumbnailsPath);
+            logger.info("Video and thumbnail directories initialized");
+        } catch (IOException e) {
+            logger.error("Failed to create directories", e);
+        }
     }
 
     public Video create(VideoDto videoDto) {
@@ -153,5 +173,61 @@ public class VideoService {
                 .orElseThrow(() -> new RuntimeException("Video not found"));
 
         return new ViewResponseDto(true, video.getViewCount());
+    }
+    
+    /**
+     * Saves uploaded video file to the static resources directory.
+     * 
+     * @param videoFile MultipartFile containing the video
+     * @return Relative path to the saved video file (e.g., "videos/video_123.mp4")
+     * @throws IOException if file cannot be saved
+     */
+    public String saveVideoFile(MultipartFile videoFile) throws IOException {
+        if (videoFile == null || videoFile.isEmpty()) {
+            throw new IllegalArgumentException("Video file is required");
+        }
+        
+        // Generate unique filename to avoid conflicts
+        String originalFilename = videoFile.getOriginalFilename();
+        String extension = originalFilename != null && originalFilename.contains(".") 
+            ? originalFilename.substring(originalFilename.lastIndexOf(".")) 
+            : ".mp4";
+        String filename = "video_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8) + extension;
+        
+        Path videosPath = Paths.get(STATIC_RESOURCES_PATH, VIDEOS_DIR);
+        Path filePath = videosPath.resolve(filename);
+        
+        Files.copy(videoFile.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+        logger.info("Video file saved: {}", filePath);
+        
+        return VIDEOS_DIR + "/" + filename;
+    }
+    
+    /**
+     * Saves uploaded thumbnail file to the static resources directory.
+     * 
+     * @param thumbnailFile MultipartFile containing the thumbnail image
+     * @return Relative path to the saved thumbnail file (e.g., "thumbnails/thumb_123.jpg")
+     * @throws IOException if file cannot be saved
+     */
+    public String saveThumbnailFile(MultipartFile thumbnailFile) throws IOException {
+        if (thumbnailFile == null || thumbnailFile.isEmpty()) {
+            throw new IllegalArgumentException("Thumbnail file is required");
+        }
+        
+        // Generate unique filename to avoid conflicts
+        String originalFilename = thumbnailFile.getOriginalFilename();
+        String extension = originalFilename != null && originalFilename.contains(".") 
+            ? originalFilename.substring(originalFilename.lastIndexOf(".")) 
+            : ".jpg";
+        String filename = "thumb_" + System.currentTimeMillis() + "_" + UUID.randomUUID().toString().substring(0, 8) + extension;
+        
+        Path thumbnailsPath = Paths.get(STATIC_RESOURCES_PATH, THUMBNAILS_DIR);
+        Path filePath = thumbnailsPath.resolve(filename);
+        
+        Files.copy(thumbnailFile.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+        logger.info("Thumbnail file saved: {}", filePath);
+        
+        return THUMBNAILS_DIR + "/" + filename;
     }
 }

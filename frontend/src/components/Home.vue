@@ -47,7 +47,7 @@ async function fetchVideos() {
       id: video.id,
       title: video.title,
       description: video.description,
-      thumbnail: `http://localhost:8080/api/thumbnails/${video.thumbnailPath}`,
+      thumbnail: `http://localhost:8080/${video.thumbnailPath}`,
       channel: video.creator?.username || 'Unknown',
       views: formatViews(video.viewCount),
       uploadedAt: formatDate(video.createdAt),

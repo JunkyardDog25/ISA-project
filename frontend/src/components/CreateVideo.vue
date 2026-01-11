@@ -109,19 +109,20 @@ async function onSubmit() {
   loading.value = true;
 
   try {
-    // For now, we'll use file paths. In a real application, you would upload files first
-    // and get their paths from the server
-    const payload = {
-      title: form.value.title,
-      description: form.value.description || null,
-      tags: form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : null,
-      videoPath: videoFile.value ? `videos/${videoFile.value.name}` : null,
-      thumbnailPath: thumbnailFile.value ? `thumbnails/${thumbnailFile.value.name}` : null,
-      fileSize: videoFile.value ? videoFile.value.size : null,
-      country: form.value.country || null
-    };
+    // Create FormData for file upload
+    const formData = new FormData();
+    formData.append('title', form.value.title);
+    if (form.value.description) {
+      formData.append('description', form.value.description);
+    }
+    formData.append('tags', form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : '');
+    if (form.value.country) {
+      formData.append('country', form.value.country);
+    }
+    formData.append('videoFile', videoFile.value);
+    formData.append('thumbnailFile', thumbnailFile.value);
 
-    await createVideo(payload);
+    await createVideo(formData);
     showSuccess('Video created successfully!');
 
     setTimeout(() => {
