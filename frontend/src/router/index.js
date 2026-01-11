@@ -6,6 +6,7 @@ import UserLogin from '@/components/UserLogin.vue';
 import UserRegistration from '@/components/UserRegistration.vue';
 import UserVerification from '@/components/UserVerification.vue';
 import VideoPlayer from '@/components/VideoPlayer.vue';
+import CreateVideo from '@/components/CreateVideo.vue';
 
 // ----- Route Definitions -----
 
@@ -37,6 +38,12 @@ const routes = [
     name: 'verify',
     component: UserVerification,
     meta: { guestOnly: true }
+  },
+  {
+    path: '/create-video',
+    name: 'create-video',
+    component: CreateVideo,
+    meta: { requiresAuth: true }
   }
 ];
 
@@ -50,16 +57,26 @@ const router = createRouter({
 // ----- Navigation Guards -----
 
 /**
- * Redirect logged-in users away from guest-only pages (login, register, verify).
+ * Navigation guards:
+ * - Redirect logged-in users away from guest-only pages (login, register, verify).
+ * - Redirect unauthenticated users away from protected pages (create-video).
  */
 router.beforeEach((to, from, next) => {
   const { isLoggedIn } = useAuth();
 
+  // Redirect logged-in users away from guest-only pages
   if (to.meta.guestOnly && isLoggedIn.value) {
     next({ name: 'home' });
-  } else {
-    next();
+    return;
   }
+
+  // Redirect unauthenticated users away from protected pages
+  if (to.meta.requiresAuth && !isLoggedIn.value) {
+    next({ name: 'login' });
+    return;
+  }
+
+  next();
 });
 
 export default router;

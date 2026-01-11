@@ -10,6 +10,7 @@ const api = axios.create({
   baseURL: BASE_URL
 });
 
+
 // ----- API Functions -----
 
 /**
@@ -47,7 +48,17 @@ export function getVideoById(id) {
  * @returns {Promise} - Axios response promise
  */
 export function createVideo(videoData) {
-  return api.post('/api/videos/create', videoData);
+  // Get token from localStorage or sessionStorage
+  const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
+  
+  const config = {};
+  if (token) {
+    config.headers = {
+      Authorization: `Bearer ${token}`
+    };
+  }
+  
+  return api.post('/api/videos/create', videoData, config);
 }
 
 /**

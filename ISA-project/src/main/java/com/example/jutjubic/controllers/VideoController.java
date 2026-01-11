@@ -1,11 +1,15 @@
 package com.example.jutjubic.controllers;
 
+import com.example.jutjubic.dto.CreateVideoDto;
 import com.example.jutjubic.dto.VideoDto;
 import com.example.jutjubic.dto.ViewResponseDto;
+import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.services.VideoService;
 import com.example.jutjubic.utils.PageResponse;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -20,8 +24,15 @@ class VideoController {
     }
 
     @PostMapping("/create")
-    public ResponseEntity<Video> createVideo(@RequestBody VideoDto videoDto) {
-        Video video = videoService.create(videoDto);
+    public ResponseEntity<Video> createVideo(@RequestBody CreateVideoDto createVideoDto) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        
+        if (authentication == null || !authentication.isAuthenticated() || !(authentication.getPrincipal() instanceof User)) {
+            return ResponseEntity.status(401).build();
+        }
+        
+        User authenticatedUser = (User) authentication.getPrincipal();
+        Video video = videoService.createVideo(createVideoDto, authenticatedUser);
         return ResponseEntity.ok(video);
     }
 

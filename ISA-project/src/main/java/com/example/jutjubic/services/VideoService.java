@@ -1,7 +1,9 @@
 package com.example.jutjubic.services;
 
+import com.example.jutjubic.dto.CreateVideoDto;
 import com.example.jutjubic.dto.VideoDto;
 import com.example.jutjubic.dto.ViewResponseDto;
+import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.repositories.VideoRepository;
 import com.example.jutjubic.utils.PageResponse;
@@ -40,6 +42,25 @@ public class VideoService {
                 videoDto.getCountry(),
                 videoDto.getViewCount() != null ? videoDto.getViewCount() : 0,
                 videoDto.getUser()
+        );
+
+        return videoRepository.save(video);
+    }
+
+    public Video createVideo(CreateVideoDto createVideoDto, User user) {
+        Video video = new Video(
+                createVideoDto.getTitle(),
+                createVideoDto.getDescription(),
+                createVideoDto.getVideoPath(),
+                createVideoDto.getThumbnailPath(),
+                createVideoDto.getThumbnailCompressedPath(),
+                createVideoDto.getFileSize() != null ? createVideoDto.getFileSize() : 0L,
+                createVideoDto.getDuration() != null ? createVideoDto.getDuration() : new Time(0),
+                createVideoDto.getTranscoded() != null ? createVideoDto.getTranscoded() : false,
+                createVideoDto.getScheduledAt(),
+                createVideoDto.getCountry(),
+                0L,
+                user
         );
 
         return videoRepository.save(video);
