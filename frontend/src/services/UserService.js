@@ -127,3 +127,28 @@ export function resendVerificationCode(email) {
     headers: { 'Content-Type': 'text/plain' }
   });
 }
+
+/**
+ * Dobija javni profil korisnika.
+ * Dostupno svim korisnicima (autentifikovanim i neautentifikovanim).
+ * @param {string} userId - User UUID
+ * @returns {Promise} - Axios response promise sa profilom korisnika
+ */
+export function getUserProfile(userId) {
+  return api.get(`/api/users/${userId}/profile`);
+}
+
+/**
+ * Dobija video objave korisnika sa paginacijom.
+ * Dostupno svim korisnicima (autentifikovanim i neautentifikovanim).
+ * @param {string} userId - User UUID
+ * @param {number} page - Page number (0-based)
+ * @param {number} size - Number of items per page
+ * @returns {Promise} - Axios response promise sa paginiranom listom video objava
+ */
+export function getUserVideos(userId, page = 0, size = 16) {
+  return api.get(`/api/users/${userId}/videos`, {
+    params: { page, size }
+  });
+}
+
