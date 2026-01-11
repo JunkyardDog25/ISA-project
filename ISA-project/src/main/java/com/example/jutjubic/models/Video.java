@@ -48,6 +48,9 @@ public class Video {
     @Column
     private String country;
 
+    @Column(columnDefinition = "TEXT")
+    private String tags;
+
     @Column(name = "view_count")
     private long viewCount;
 
@@ -61,7 +64,7 @@ public class Video {
     @JoinColumn(name = "user_id")
     private User creator;
 
-    public Video(String title, String description, String videoPath, String thumbnailPath, String thumbnailCompressedPath, long fileSize, Time duration, boolean transcoded, LocalDateTime scheduledAt, String country, long viewCount, User user) {
+    public Video(String title, String description, String videoPath, String thumbnailPath, String thumbnailCompressedPath, long fileSize, Time duration, boolean transcoded, LocalDateTime scheduledAt, String country, String tags, long viewCount, User user) {
         this.title = title;
         this.description = description;
         this.videoPath = videoPath;
@@ -72,6 +75,7 @@ public class Video {
         this.transcoded = transcoded;
         this.scheduledAt = scheduledAt;
         this.country = country;
+        this.tags = tags;
         this.viewCount = viewCount;
         this.creator = user;
         this.createdAt = LocalDateTime.now();

@@ -13,42 +13,93 @@ const { showError, showSuccess } = useToast();
 
 // Form state
 const loading = ref(false);
+const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB in bytes
 
 const form = ref({
   title: '',
   description: '',
-  videoPath: '',
-  thumbnailPath: '',
-  thumbnailCompressedPath: '',
-  fileSize: '',
-  duration: '',
-  transcoded: false,
-  scheduledAt: '',
+  tags: '',
   country: ''
 });
+
+// File uploads
+const videoFile = ref(null);
+const thumbnailFile = ref(null);
 
 // Track which fields have been touched (blurred)
 const touched = ref({
   title: false,
-  videoPath: false
+  tags: false,
+  videoFile: false,
+  thumbnailFile: false
 });
 
 // ----- Validation -----
 
 const errors = computed(() => ({
   title: !form.value.title ? 'Title is required.' : '',
-  videoPath: !form.value.videoPath ? 'Video path is required.' : ''
+  tags: !form.value.tags || form.value.tags.trim() === '' ? 'Tags are required.' : '',
+  videoFile: !videoFile.value ? 'Video file is required.' : 
+    (!videoFile.value.name.toLowerCase().endsWith('.mp4') ? 'Video file must be in MP4 format.' : 
+    (videoFile.value.size > MAX_VIDEO_SIZE ? `Video file size exceeds maximum allowed size of 200MB. Current size: ${formatFileSize(videoFile.value.size)}` : '')),
+  thumbnailFile: !thumbnailFile.value ? 'Thumbnail image is required.' : 
+    (!thumbnailFile.value.type.startsWith('image/') ? 'Thumbnail must be an image file.' : '')
 }));
 
 const isFormValid = computed(
-  () => !errors.value.title && !errors.value.videoPath
+  () => !errors.value.title && !errors.value.tags && !errors.value.videoFile && !errors.value.thumbnailFile
 );
+
+// Helper function to format file size
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
 
 // ----- Form Submission -----
 
 function markAllTouched() {
   touched.value.title = true;
-  touched.value.videoPath = true;
+  touched.value.tags = true;
+  touched.value.videoFile = true;
+  touched.value.thumbnailFile = true;
+}
+
+function handleVideoFileChange(event) {
+  const file = event.target.files[0];
+  if (file) {
+    if (!file.name.toLowerCase().endsWith('.mp4')) {
+      showError('Video file must be in MP4 format.');
+      event.target.value = '';
+      videoFile.value = null;
+      return;
+    }
+    if (file.size > MAX_VIDEO_SIZE) {
+      showError(`Video file size exceeds maximum allowed size of 200MB. Current size: ${formatFileSize(file.size)}`);
+      event.target.value = '';
+      videoFile.value = null;
+      return;
+    }
+    videoFile.value = file;
+    touched.value.videoFile = true;
+  }
+}
+
+function handleThumbnailFileChange(event) {
+  const file = event.target.files[0];
+  if (file) {
+    if (!file.type.startsWith('image/')) {
+      showError('Thumbnail must be an image file.');
+      event.target.value = '';
+      thumbnailFile.value = null;
+      return;
+    }
+    thumbnailFile.value = file;
+    touched.value.thumbnailFile = true;
+  }
 }
 
 async function onSubmit() {
@@ -58,16 +109,15 @@ async function onSubmit() {
   loading.value = true;
 
   try {
+    // For now, we'll use file paths. In a real application, you would upload files first
+    // and get their paths from the server
     const payload = {
       title: form.value.title,
       description: form.value.description || null,
-      videoPath: form.value.videoPath,
-      thumbnailPath: form.value.thumbnailPath || null,
-      thumbnailCompressedPath: form.value.thumbnailCompressedPath || null,
-      fileSize: form.value.fileSize ? parseInt(form.value.fileSize) : null,
-      duration: form.value.duration || null,
-      transcoded: form.value.transcoded || false,
-      scheduledAt: form.value.scheduledAt || null,
+      tags: form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : null,
+      videoPath: videoFile.value ? `/static/videos/${videoFile.value.name}` : null,
+      thumbnailPath: thumbnailFile.value ? `/static/thumbnails/${thumbnailFile.value.name}` : null,
+      fileSize: videoFile.value ? videoFile.value.size : null,
       country: form.value.country || null
     };
 
@@ -129,95 +179,69 @@ function handleCreateError(e) {
           ></textarea>
         </div>
 
-        <!-- Video Path -->
+        <!-- Tags -->
         <div class="form-group">
-          <label for="videoPath">Video Path <span class="required">*</span></label>
+          <label for="tags">Tags <span class="required">*</span></label>
           <input
-            id="videoPath"
-            v-model="form.videoPath"
+            id="tags"
+            v-model="form.tags"
+            type="text"
             required
-            placeholder="e.g., /static/videos/video1.mp4"
-            :class="{ 'input-error': touched.videoPath && errors.videoPath }"
-            @blur="touched.videoPath = true"
+            placeholder="Enter tags separated by commas (e.g., gaming, tutorial, tech)"
+            :class="{ 'input-error': touched.tags && errors.tags }"
+            @blur="touched.tags = true"
           />
-          <span v-if="touched.videoPath && errors.videoPath" class="error-text">
-            {{ errors.videoPath }}
+          <span v-if="touched.tags && errors.tags" class="error-text">
+            {{ errors.tags }}
+          </span>
+          <small class="help-text">Separate multiple tags with commas</small>
+        </div>
+
+        <!-- Video File Upload -->
+        <div class="form-group">
+          <label for="videoFile">Video File (MP4, max 200MB) <span class="required">*</span></label>
+          <input
+            id="videoFile"
+            type="file"
+            accept="video/mp4"
+            :class="{ 'input-error': touched.videoFile && errors.videoFile }"
+            @change="handleVideoFileChange"
+          />
+          <span v-if="touched.videoFile && errors.videoFile" class="error-text">
+            {{ errors.videoFile }}
+          </span>
+          <span v-if="videoFile && !errors.videoFile" class="file-info">
+            Selected: {{ videoFile.name }} ({{ formatFileSize(videoFile.size) }})
           </span>
         </div>
 
-        <!-- Thumbnail Path -->
+        <!-- Thumbnail File Upload -->
         <div class="form-group">
-          <label for="thumbnailPath">Thumbnail Path</label>
+          <label for="thumbnailFile">Thumbnail Image <span class="required">*</span></label>
           <input
-            id="thumbnailPath"
-            v-model="form.thumbnailPath"
-            placeholder="e.g., /static/thumbnails/thumb1.jpg"
+            id="thumbnailFile"
+            type="file"
+            accept="image/*"
+            :class="{ 'input-error': touched.thumbnailFile && errors.thumbnailFile }"
+            @change="handleThumbnailFileChange"
           />
+          <span v-if="touched.thumbnailFile && errors.thumbnailFile" class="error-text">
+            {{ errors.thumbnailFile }}
+          </span>
+          <span v-if="thumbnailFile && !errors.thumbnailFile" class="file-info">
+            Selected: {{ thumbnailFile.name }} ({{ formatFileSize(thumbnailFile.size) }})
+          </span>
         </div>
 
-        <!-- Thumbnail Compressed Path -->
+        <!-- Country -->
         <div class="form-group">
-          <label for="thumbnailCompressedPath">Thumbnail Compressed Path</label>
+          <label for="country">Geographic Location (Optional)</label>
           <input
-            id="thumbnailCompressedPath"
-            v-model="form.thumbnailCompressedPath"
-            placeholder="e.g., /static/thumbnails/thumb1_compressed.jpg"
+            id="country"
+            v-model="form.country"
+            type="text"
+            placeholder="e.g., Serbia"
           />
-        </div>
-
-        <!-- File Size & Duration Grid -->
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="fileSize">File Size (bytes)</label>
-            <input
-              id="fileSize"
-              v-model="form.fileSize"
-              type="number"
-              placeholder="e.g., 10485760"
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="duration">Duration (HH:MM:SS)</label>
-            <input
-              id="duration"
-              v-model="form.duration"
-              placeholder="e.g., 00:05:30"
-            />
-          </div>
-        </div>
-
-        <!-- Country & Scheduled At Grid -->
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="country">Country</label>
-            <input
-              id="country"
-              v-model="form.country"
-              placeholder="e.g., Serbia"
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="scheduledAt">Scheduled At</label>
-            <input
-              id="scheduledAt"
-              v-model="form.scheduledAt"
-              type="datetime-local"
-            />
-          </div>
-        </div>
-
-        <!-- Transcoded -->
-        <div class="form-group checkbox-group">
-          <label class="checkbox-label">
-            <input
-              id="transcoded"
-              v-model="form.transcoded"
-              type="checkbox"
-            />
-            <span>Video is transcoded</span>
-          </label>
         </div>
 
         <!-- Submit button -->
@@ -297,6 +321,7 @@ h2 {
 input[type="text"],
 input[type="number"],
 input[type="datetime-local"],
+input[type="file"],
 textarea {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -307,6 +332,26 @@ textarea {
   box-sizing: border-box;
   background: #fff;
   font-family: inherit;
+}
+
+input[type="file"] {
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
+input[type="file"]::file-selector-button {
+  padding: 0.5rem 1rem;
+  margin-right: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f5f5f5;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+input[type="file"]::file-selector-button:hover {
+  background: #e8e8e8;
 }
 
 textarea {
@@ -340,6 +385,21 @@ textarea::placeholder {
   color: #ff4444;
   font-size: 0.8rem;
   margin-top: 0.35rem;
+}
+
+.help-text {
+  display: block;
+  color: #666;
+  font-size: 0.8rem;
+  margin-top: 0.35rem;
+}
+
+.file-info {
+  display: block;
+  color: #28a745;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  font-weight: 500;
 }
 
 /* Grid */

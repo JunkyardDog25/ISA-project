@@ -18,12 +18,9 @@ import java.time.LocalDateTime;
 public class CreateVideoDto {
     private String title;
     private String description;
+    private String tags;
     private String videoPath;
     private String thumbnailPath;
-    private String thumbnailCompressedPath;
     private Long fileSize;
-    private Time duration;
-    private Boolean transcoded;
-    private LocalDateTime scheduledAt;
     private String country;
 }

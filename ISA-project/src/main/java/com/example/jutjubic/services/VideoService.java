@@ -40,6 +40,7 @@ public class VideoService {
                 videoDto.getTranscoded() != null ? videoDto.getTranscoded() : false,
                 videoDto.getScheduledAt(),
                 videoDto.getCountry(),
+                null, // tags - not in VideoDto, can be null
                 videoDto.getViewCount() != null ? videoDto.getViewCount() : 0,
                 videoDto.getUser()
         );
@@ -47,19 +48,27 @@ public class VideoService {
         return videoRepository.save(video);
     }
 
+    private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
+
     public Video createVideo(CreateVideoDto createVideoDto, User user) {
+        // Validate file size
+        if (createVideoDto.getFileSize() != null && createVideoDto.getFileSize() > MAX_VIDEO_SIZE) {
+            throw new IllegalArgumentException("Video file size exceeds maximum allowed size of 200MB");
+        }
+
         Video video = new Video(
                 createVideoDto.getTitle(),
                 createVideoDto.getDescription(),
                 createVideoDto.getVideoPath(),
                 createVideoDto.getThumbnailPath(),
-                createVideoDto.getThumbnailCompressedPath(),
+                null, // thumbnailCompressedPath - not needed for creation
                 createVideoDto.getFileSize() != null ? createVideoDto.getFileSize() : 0L,
-                createVideoDto.getDuration() != null ? createVideoDto.getDuration() : new Time(0),
-                createVideoDto.getTranscoded() != null ? createVideoDto.getTranscoded() : false,
-                createVideoDto.getScheduledAt(),
+                new Time(0), // duration - will be set later if needed
+                false, // transcoded - default false
+                null, // scheduledAt - not needed for immediate posting
                 createVideoDto.getCountry(),
-                0L,
+                createVideoDto.getTags(),
+                0L, // viewCount - starts at 0
                 user
         );
 
