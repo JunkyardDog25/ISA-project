@@ -8,6 +8,7 @@ import com.example.jutjubic.services.AuthenticationService;
 import com.example.jutjubic.services.JwtService;
 import com.example.jutjubic.utils.LoginResponse;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,17 +33,25 @@ public class AuthenticationController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> authenticate(@RequestBody LoginUserDto loginUserDto) {
-        User authenticatedUser = authenticationService.authenticate(loginUserDto);
-        String jwtToken = jwtService.generateToken(authenticatedUser);
-        LoginResponse response = new LoginResponse(
-            jwtToken,
-            jwtService.getExpirationTime(),
-            authenticatedUser.getId(),
-            authenticatedUser.getUsername(),
-            authenticatedUser.getEmail()
-        );
-        return ResponseEntity.ok(response);
+    public ResponseEntity<?> authenticate(@RequestBody LoginUserDto loginUserDto) {
+        try {
+            User authenticatedUser = authenticationService.authenticate(loginUserDto);
+            String jwtToken = jwtService.generateToken(authenticatedUser);
+            LoginResponse response = new LoginResponse(
+                jwtToken,
+                jwtService.getExpirationTime(),
+                authenticatedUser.getId(),
+                authenticatedUser.getUsername(),
+                authenticatedUser.getEmail()
+            );
+            return ResponseEntity.ok(response);
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(401).body("Invalid email or password");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(401).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body("An error occurred during authentication");
+        }
     }
 
     @PostMapping("/verify")

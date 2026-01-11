@@ -7,6 +7,8 @@ import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.repositories.VideoRepository;
 import com.example.jutjubic.utils.PageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -20,7 +22,7 @@ import java.util.UUID;
 
 @Service
 public class VideoService {
-
+    private static final Logger logger = LoggerFactory.getLogger(VideoService.class);
     private static final int MAX_PAGE_SIZE = 100;
 
     private final VideoRepository videoRepository;
@@ -53,23 +55,45 @@ public class VideoService {
 
     private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
 
-    @Transactional
+    /**
+     * Creates a new video transactionally.
+     * If any error occurs during the process, the entire transaction will be rolled back.
+     * 
+     * @param createVideoDto DTO containing video creation data
+     * @param user Authenticated user creating the video
+     * @return Saved Video entity
+     * @throws IllegalArgumentException if file size exceeds maximum allowed size
+     * @throws RuntimeException if user is not found or any other error occurs
+     */
+    /**
+     * Creates a new video transactionally.
+     * If any error occurs during the process, the entire transaction will be rolled back.
+     * 
+     * @param createVideoDto DTO containing video creation data
+     * @param user Authenticated user creating the video
+     * @return Saved Video entity
+     * @throws IllegalArgumentException if file size exceeds maximum allowed size
+     * @throws RuntimeException if user is not found or any other error occurs
+     */
+    @Transactional(rollbackFor = {Exception.class})
     public Video createVideo(CreateVideoDto createVideoDto, User user) {
-        System.out.println("=== VideoService.createVideo START ===");
-        System.out.println("Title: " + createVideoDto.getTitle());
-        System.out.println("User ID: " + user.getId());
+        logger.debug("Starting transactional video creation for user: {}", user.getId());
         
         // Validate file size
         if (createVideoDto.getFileSize() != null && createVideoDto.getFileSize() > MAX_VIDEO_SIZE) {
+            logger.warn("Video file size validation failed: {} bytes exceeds maximum of {} bytes", 
+                    createVideoDto.getFileSize(), MAX_VIDEO_SIZE);
             throw new IllegalArgumentException("Video file size exceeds maximum allowed size of 200MB");
         }
 
-        // Load user from database to ensure it's a managed entity
-        System.out.println("Loading user from database...");
+        // Load user from database to ensure it's a managed entity within the transaction
         User managedUser = userService.getUserById(user.getId());
-        System.out.println("User loaded: " + managedUser.getUsername());
+        if (managedUser == null) {
+            logger.error("User not found with id: {}", user.getId());
+            throw new RuntimeException("User not found with id: " + user.getId());
+        }
 
-        System.out.println("Creating Video object...");
+        // Create Video entity
         Video video = new Video(
                 createVideoDto.getTitle(),
                 createVideoDto.getDescription(),
@@ -86,29 +110,14 @@ public class VideoService {
                 managedUser
         );
         
-        System.out.println("Video object created - ID before save: " + video.getId());
-        System.out.println("Video title: " + video.getTitle());
-        System.out.println("Video videoPath: " + video.getVideoPath());
-        System.out.println("Video creator ID: " + (video.getCreator() != null ? video.getCreator().getId() : "NULL"));
-        
-        System.out.println("Calling videoRepository.save()...");
+        // Save video - this will be committed when transaction completes successfully
         Video savedVideo = videoRepository.save(video);
-        System.out.println("Video saved - ID after save: " + savedVideo.getId());
+        logger.debug("Video entity saved with ID: {}", savedVideo.getId());
         
-        System.out.println("Calling videoRepository.flush()...");
+        // Flush to ensure immediate persistence within transaction
         videoRepository.flush();
-        System.out.println("After flush - ID: " + savedVideo.getId());
+        logger.debug("Transaction flushed - video will be committed on method completion");
         
-        // Verify the video was actually saved
-        System.out.println("Verifying video exists in database...");
-        Video verifyVideo = videoRepository.findById(savedVideo.getId()).orElse(null);
-        if (verifyVideo != null) {
-            System.out.println("✓ Video verified in database - ID: " + verifyVideo.getId());
-        } else {
-            System.out.println("✗ ERROR: Video NOT found in database after save!");
-        }
-        
-        System.out.println("=== VideoService.createVideo SUCCESS ===");
         return savedVideo;
     }
 
