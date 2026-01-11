@@ -7,7 +7,7 @@ $baseUrl = "http://localhost:8080"
 
 #   - GET /api/users - za userId
 #   - GET /api/videos/ - za videoId
-$userId = "6fb673ca-7c37-4c4e-a9bd-0b533976e1f8"    # Zameni sa stvarnim user ID
+$userId = "87a60cb1-76d9-4f12-a447-0f7249edba4f"    # Zameni sa stvarnim user ID
 $videoId = "e695bd52-d091-4c06-a702-f9cd7b0c2b33"  # Zameni sa stvarnim video ID
 
 # Broj komentara za slanje (treba biti > 60 da testiramo limit)
