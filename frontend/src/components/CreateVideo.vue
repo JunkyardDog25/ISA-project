@@ -115,8 +115,8 @@ async function onSubmit() {
       title: form.value.title,
       description: form.value.description || null,
       tags: form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : null,
-      videoPath: videoFile.value ? `/static/videos/${videoFile.value.name}` : null,
-      thumbnailPath: thumbnailFile.value ? `/static/thumbnails/${thumbnailFile.value.name}` : null,
+      videoPath: videoFile.value ? `videos/${videoFile.value.name}` : null,
+      thumbnailPath: thumbnailFile.value ? `thumbnails/${thumbnailFile.value.name}` : null,
       fileSize: videoFile.value ? videoFile.value.size : null,
       country: form.value.country || null
     };
