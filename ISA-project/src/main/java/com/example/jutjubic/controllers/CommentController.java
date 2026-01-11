@@ -4,13 +4,12 @@ import com.example.jutjubic.dto.CommentDto;
 import com.example.jutjubic.models.Comment;
 import com.example.jutjubic.services.CommentService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.UUID;
 
-@Controller
+@RestController
 @RequestMapping("/api/comments")
 public class CommentController {
     private final CommentService commentService;

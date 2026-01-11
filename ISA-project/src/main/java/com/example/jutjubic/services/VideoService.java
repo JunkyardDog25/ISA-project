@@ -64,6 +64,20 @@ public class VideoService {
         return optionalVideo.orElse(null);
     }
 
+    /**
+     * Dobija paginiranu listu video objava za datog korisnika.
+     * Sortira po vremenu kreiranja (najnovije prvo).
+     */
+    public PageResponse<Video> getVideosByUserId(UUID userId, int page, int size) {
+        int validPage = Math.max(0, page);
+        int validSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+
+        Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<Video> videoPage = videoRepository.findByCreatorId(userId, pageable);
+
+        return PageResponse.from(videoPage);
+    }
+
 
     public ViewResponseDto incrementViews(UUID videoId) {
         Video video = videoRepository.findById(videoId)

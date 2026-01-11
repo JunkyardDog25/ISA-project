@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
-import { getVideoById, toggleLike, getLikeStatus, incrementViewCount } from '@/services/VideoService.js';
+import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount } from '@/services/VideoService.js';
 import { getCommentsByVideoId, createComment } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
@@ -57,12 +57,12 @@ async function fetchVideo() {
     // Increment view count
     await incrementViews();
 
-    // Fetch like status if user is logged in
+    // Fetch like status if user is logged in, otherwise just get the count
     if (isLoggedIn.value && user.value?.id) {
       await fetchLikeStatus();
     } else {
-      // Just get the like count for non-logged-in users
-      likeCount.value = video.value.likeCount || 0;
+      // Za neautentifikovane korisnike - samo dobij broj lajkova
+      await fetchLikeCount();
     }
 
     // Fetch comments for the video
@@ -93,6 +93,21 @@ async function fetchLikeStatus() {
     likeCount.value = response.data.likeCount;
   } catch (e) {
     console.error('Error fetching like status:', e);
+    // Ako ne uspe, koristi javni endpoint za broj lajkova
+    await fetchLikeCount();
+  }
+}
+
+/**
+ * Dobija samo broj lajkova (za neautentifikovane korisnike ili kao backup).
+ */
+async function fetchLikeCount() {
+  try {
+    const response = await getLikeCount(videoId.value);
+    likeCount.value = response.data;
+    isLiked.value = false;
+  } catch (e) {
+    console.error('Error fetching like count:', e);
     likeCount.value = video.value?.likeCount || 0;
   }
 }
@@ -112,7 +127,7 @@ async function fetchComments() {
 
 async function handleSubmitComment() {
   if (!isLoggedIn.value || !user.value?.id) {
-    showError('Please log in to comment');
+    showError('Morate se prijaviti da biste komentarisali');
     return;
   }
 
@@ -129,11 +144,16 @@ async function handleSubmitComment() {
     await createComment(videoId.value, commentData);
     newComment.value = '';
     isCommentFocused.value = false;
-    showSuccess('Comment added successfully');
+    showSuccess('Komentar je uspešno dodat');
     await fetchComments();
   } catch (e) {
     console.error('Error adding comment:', e);
-    showError('Failed to add comment');
+    console.error('Response:', e?.response?.data);
+    if (e?.response?.status === 401 || e?.response?.status === 403) {
+      showError('Morate se prijaviti da biste komentarisali');
+    } else {
+      showError(e?.response?.data?.message || 'Greška pri dodavanju komentara');
+    }
   } finally {
     isSubmittingComment.value = false;
   }
@@ -150,8 +170,8 @@ function handleCommentBlur(event) {
 
 async function handleToggleLike() {
   if (!isLoggedIn.value || !user.value?.id) {
-    // Optionally redirect to login or show a message
-    console.warn('User must be logged in to like videos');
+    // Prikaži obaveštenje da se korisnik mora prijaviti
+    showError('Morate se prijaviti da biste lajkovali video');
     return;
   }
 
@@ -159,8 +179,15 @@ async function handleToggleLike() {
     const response = await toggleLike(videoId.value, user.value.id);
     isLiked.value = response.data.liked;
     likeCount.value = response.data.likeCount;
+    showSuccess(isLiked.value ? 'Video je lajkovan!' : 'Lajk je uklonjen');
   } catch (e) {
     console.error('Error toggling like:', e);
+    console.error('Response:', e?.response?.data);
+    if (e?.response?.status === 401 || e?.response?.status === 403) {
+      showError('Morate se prijaviti da biste lajkovali video');
+    } else {
+      showError(e?.response?.data?.message || 'Greška pri lajkovanju videa');
+    }
   }
 }
 
@@ -279,11 +306,27 @@ onMounted(() => {
         <div class="video-actions-row">
           <!-- Channel Info -->
           <div class="channel-section">
-            <div class="channel-avatar">
+            <RouterLink
+              v-if="video.creator?.id"
+              :to="{ name: 'user-profile', params: { id: video.creator.id } }"
+              class="channel-avatar-link"
+            >
+              <div class="channel-avatar">
+                {{ video.creator?.username?.charAt(0)?.toUpperCase() || '?' }}
+              </div>
+            </RouterLink>
+            <div v-else class="channel-avatar">
               {{ video.creator?.username?.charAt(0)?.toUpperCase() || '?' }}
             </div>
             <div class="channel-details">
-              <span class="channel-name">{{ video.creator?.username || 'Unknown' }}</span>
+              <RouterLink
+                v-if="video.creator?.id"
+                :to="{ name: 'user-profile', params: { id: video.creator.id } }"
+                class="channel-name-link"
+              >
+                {{ video.creator?.username || 'Unknown' }}
+              </RouterLink>
+              <span v-else class="channel-name">{{ video.creator?.username || 'Unknown' }}</span>
             </div>
           </div>
 
@@ -294,8 +337,7 @@ onMounted(() => {
               class="action-btn like-btn"
               :class="{ active: isLiked }"
               @click="handleToggleLike"
-              :disabled="!isLoggedIn"
-              :title="isLoggedIn ? (isLiked ? 'Unlike' : 'Like') : 'Login to like'"
+              :title="isLoggedIn ? (isLiked ? 'Unlike' : 'Like') : 'Prijavite se da biste lajkovali'"
             >
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/>
@@ -370,12 +412,28 @@ onMounted(() => {
           <!-- Comments List -->
           <div v-else-if="comments.length > 0" class="comments-list">
             <div v-for="comment in comments" :key="comment.id" class="comment-item">
-              <div class="comment-avatar">
+              <RouterLink
+                v-if="comment.userId"
+                :to="{ name: 'user-profile', params: { id: comment.userId } }"
+                class="comment-avatar-link"
+              >
+                <div class="comment-avatar">
+                  {{ comment.username?.charAt(0)?.toUpperCase() || '?' }}
+                </div>
+              </RouterLink>
+              <div v-else class="comment-avatar">
                 {{ comment.username?.charAt(0)?.toUpperCase() || '?' }}
               </div>
               <div class="comment-content">
                 <div class="comment-header">
-                  <span class="comment-author">{{ comment.username || 'Unknown User' }}</span>
+                  <RouterLink
+                    v-if="comment.userId"
+                    :to="{ name: 'user-profile', params: { id: comment.userId } }"
+                    class="comment-author-link"
+                  >
+                    {{ comment.username || 'Unknown User' }}
+                  </RouterLink>
+                  <span v-else class="comment-author">{{ comment.username || 'Unknown User' }}</span>
                   <span class="comment-date">{{ formatRelativeDate(comment.createdAt) }}</span>
                 </div>
                 <p class="comment-text">{{ comment.content }}</p>
@@ -541,6 +599,29 @@ onMounted(() => {
   font-size: 1rem;
   font-weight: 600;
   color: #111;
+}
+
+/* Profile Links */
+.channel-avatar-link,
+.channel-name-link {
+  text-decoration: none;
+  color: inherit;
+  transition: opacity 0.2s ease;
+}
+
+.channel-avatar-link:hover,
+.channel-name-link:hover {
+  opacity: 0.8;
+}
+
+.channel-name-link {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111;
+}
+
+.channel-name-link:hover {
+  text-decoration: underline;
 }
 
 /* Action Buttons */
@@ -826,6 +907,27 @@ onMounted(() => {
   font-size: 0.8125rem;
   font-weight: 600;
   color: #111;
+}
+
+/* Comment Profile Links */
+.comment-avatar-link {
+  text-decoration: none;
+}
+
+.comment-avatar-link:hover .comment-avatar {
+  opacity: 0.8;
+}
+
+.comment-author-link {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #111;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.comment-author-link:hover {
+  text-decoration: underline;
 }
 
 .comment-date {
