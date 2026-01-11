@@ -35,7 +35,12 @@ api.interceptors.response.use(
     // Handle authentication errors (401/403/500)
     if (status === 401 || status === 403 || status === 500) {
       error.isAuthError = true;
-      error.userMessage = 'Please check your password and email and try again.';
+      // Use server message if available (could be string or object with message property)
+      const responseData = error?.response?.data;
+      const serverMessage = typeof responseData === 'string' 
+        ? responseData 
+        : (responseData?.message || responseData);
+      error.userMessage = serverMessage || 'Please check your password and email and try again.';
     }
 
     return Promise.reject(error);

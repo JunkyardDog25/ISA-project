@@ -29,11 +29,24 @@ class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain filterChain) throws ServletException, IOException {
+        String requestPath = request.getRequestURI();
+        if (requestPath.contains("/api/videos/create")) {
+            System.out.println("JWT Filter: Processing /api/videos/create request");
+            System.out.println("Method: " + request.getMethod());
+        }
+        
         final String authHeader = request.getHeader("Authorization");
 
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            if (requestPath.contains("/api/videos/create")) {
+                System.out.println("JWT Filter: No Authorization header found for /api/videos/create");
+            }
             filterChain.doFilter(request, response);
             return;
+        }
+        
+        if (requestPath.contains("/api/videos/create")) {
+            System.out.println("JWT Filter: Authorization header found");
         }
 
         try {
@@ -54,14 +67,21 @@ class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
+                    
+                    if (requestPath.contains("/api/videos/create")) {
+                        System.out.println("JWT Filter: User authenticated: " + userEmail);
+                    }
                 }
             }
 
             filterChain.doFilter(request, response);
         } catch (Exception e) {
-            // Ako je token neispravan, nastavi bez autentifikacije
-            // Security Config će odlučiti da li je ruta dozvoljena
             filterChain.doFilter(request, response);
+            if (requestPath.contains("/api/videos/create")) {
+                System.out.println("JWT Filter: Exception: " + e.getMessage());
+                e.printStackTrace();
+            }
+            exceptionResolver.resolveException(request, response, null, e);
         }
     }
 }

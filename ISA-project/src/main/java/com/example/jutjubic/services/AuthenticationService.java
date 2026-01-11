@@ -9,6 +9,7 @@ import jakarta.mail.MessagingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -49,18 +50,32 @@ public class AuthenticationService {
     }
 
     public User authenticate(LoginUserDto loginUserDto) {
+        logger.debug("Attempting to authenticate user with email: {}", loginUserDto.getEmail());
+        
         User user = userRepository.findByEmail(loginUserDto.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found with email: " + loginUserDto.getEmail()));
+                .orElseThrow(() -> {
+                    logger.warn("User not found with email: {}", loginUserDto.getEmail());
+                    return new RuntimeException("User not found with email: " + loginUserDto.getEmail());
+                });
 
-        if (!user.isEnabled())
-            throw new RuntimeException("User is not enabled");
+        if (!user.isEnabled()) {
+            logger.warn("User account is not enabled for email: {}", loginUserDto.getEmail());
+            throw new RuntimeException("User is not enabled. Please verify your email first.");
+        }
 
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(
-                        loginUserDto.getEmail(),
-                        loginUserDto.getPassword()
-                )
-        );
+        try {
+            logger.debug("Authenticating user with AuthenticationManager");
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            loginUserDto.getEmail(),
+                            loginUserDto.getPassword()
+                    )
+            );
+            logger.info("User successfully authenticated: {}", user.getUsername());
+        } catch (BadCredentialsException e) {
+            logger.warn("Bad credentials for email: {}", loginUserDto.getEmail());
+            throw new RuntimeException("Invalid email or password");
+        }
 
         return user;
     }

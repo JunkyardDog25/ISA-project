@@ -16,8 +16,12 @@ class ApplicationConfiguration {
 
     @Bean
     UserDetailsService userDetailsService(UserRepository userRepository) {
-        return username -> userRepository.findByEmail(username)
-                .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
+        return identifier -> {
+            // Try to find by email first (for login)
+            return userRepository.findByEmail(identifier)
+                    .or(() -> userRepository.findByUsername(identifier)) // Fallback to username (for JWT token)
+                    .orElseThrow(() -> new RuntimeException("User not found with identifier: " + identifier));
+        };
     }
 
     @Bean

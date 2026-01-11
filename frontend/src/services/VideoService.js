@@ -70,12 +70,25 @@ export function getVideoById(id) {
 }
 
 /**
- * Create a new video.
- * @param {Object} videoData - Video data
+ * Create a new video with file upload.
+ * @param {FormData} formData - FormData containing video data and files
  * @returns {Promise} - Axios response promise
  */
-export function createVideo(videoData) {
-  return api.post('/api/videos/create', videoData);
+export function createVideo(formData) {
+  // Get token from localStorage or sessionStorage
+  const token = localStorage.getItem('authToken') || sessionStorage.getItem('authToken');
+  
+  const config = {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  };
+  
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  
+  return api.post('/api/videos/create', formData, config);
 }
 
 /**
