@@ -30,6 +30,7 @@ import java.util.UUID;
 public class VideoService {
     private static final Logger logger = LoggerFactory.getLogger(VideoService.class);
     private static final int MAX_PAGE_SIZE = 100;
+    private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
     private static final String MEDIA_PATH = "media/";
     private static final String VIDEOS_DIR = "videos";
     private static final String THUMBNAILS_DIR = "thumbnails";
@@ -72,8 +73,6 @@ public class VideoService {
 
         return videoRepository.save(video);
     }
-
-    private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
 
     /**
      * Creates a new video transactionally.
