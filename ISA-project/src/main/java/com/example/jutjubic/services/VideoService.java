@@ -2,10 +2,13 @@ package com.example.jutjubic.services;
 
 import com.example.jutjubic.dto.CreateVideoDto;
 import com.example.jutjubic.dto.VideoDto;
+import com.example.jutjubic.dto.VideoViewDto;
 import com.example.jutjubic.dto.ViewResponseDto;
 import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
+import com.example.jutjubic.models.VideoView;
 import com.example.jutjubic.repositories.VideoRepository;
+import com.example.jutjubic.repositories.VideoViewRepository;
 import com.example.jutjubic.utils.PageResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,15 +33,19 @@ import java.util.UUID;
 public class VideoService {
     private static final Logger logger = LoggerFactory.getLogger(VideoService.class);
     private static final int MAX_PAGE_SIZE = 100;
+    private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
     private static final String MEDIA_PATH = "media/";
     private static final String VIDEOS_DIR = "videos";
     private static final String THUMBNAILS_DIR = "thumbnails";
 
     private final VideoRepository videoRepository;
+    private final VideoViewRepository videoViewRepository;
+
     private final UserService userService;
 
-    public VideoService(VideoRepository videoRepository, UserService userService) {
+    public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository, UserService userService) {
         this.videoRepository = videoRepository;
+        this.videoViewRepository = videoViewRepository;
         this.userService = userService;
 
         // Ensure directories exist
@@ -72,8 +79,6 @@ public class VideoService {
 
         return videoRepository.save(video);
     }
-
-    private static final long MAX_VIDEO_SIZE = 200L * 1024 * 1024; // 200MB in bytes
 
     /**
      * Creates a new video transactionally.
@@ -141,6 +146,9 @@ public class VideoService {
 
         Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<Video> videoPage = videoRepository.findAll(pageable);
+        videoPage.getContent().forEach(video -> video.setViewCount(
+                videoViewRepository.countVideoViewByVideo_Id(video.getId())
+        ));
 
         return PageResponse.from(videoPage);
     }
@@ -164,19 +172,22 @@ public class VideoService {
         return PageResponse.from(videoPage);
     }
 
-
     @Transactional
     public ViewResponseDto incrementViews(UUID videoId) {
-        int rowsUpdated = videoRepository.incrementViewCount(videoId);
+        VideoViewDto videoViewDto = new VideoViewDto(
+                videoRepository.findVideoById(videoId).get(),
+                userService.getLoggedUser()
+        );
+        VideoView videoView = new VideoView(videoViewDto);
+        videoViewRepository.save(videoView);
 
-        if (rowsUpdated == 0) {
-            throw new RuntimeException("Video not found");
-        }
+        int videoViews = videoViewRepository.countVideoViewByVideo_Id(videoId);
 
-        Video video = videoRepository.findById(videoId)
-                .orElseThrow(() -> new RuntimeException("Video not found"));
+        Video video = videoRepository.findVideoById(videoId).get();
+        video.setViewCount(videoViews);
+        videoRepository.save(video);
 
-        return new ViewResponseDto(true, video.getViewCount());
+        return new ViewResponseDto(true, videoViews);
     }
 
     /**
