@@ -130,3 +130,11 @@ export function getLikeCount(videoId) {
 export function incrementViewCount(videoId) {
   return api.put(`/api/videos/${videoId}/views`);
 }
+
+/**
+ * Get daily popular videos.
+ * @returns {Promise} - Axios response promise with video list
+ */
+export function getDailyPopularVideos() {
+  return api.get(`/api/daily-popular-videos`);
+}

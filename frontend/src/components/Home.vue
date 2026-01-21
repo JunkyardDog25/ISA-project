@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
-import { getVideosPaginated } from '@/services/VideoService.js';
+import { getVideosPaginated, getDailyPopularVideos } from '@/services/VideoService.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -29,7 +29,12 @@ const currentPage = computed(() => {
 
 // ----- Video Data -----
 
+// `videos` holds the paginated page content from the server
 const videos = ref([]);
+// `trendingVideos` holds daily popular videos returned by dedicated endpoint
+const trendingVideos = ref([]);
+// `otherVideos` is derived: paginated videos excluding trending ones
+const otherVideos = ref([]);
 
 // ----- Fetch Videos -----
 
@@ -38,6 +43,35 @@ async function fetchVideos() {
   error.value = null;
 
   try {
+    // Fetch daily popular videos first, but only for logged-in users
+    if (isLoggedIn.value) {
+      try {
+        const trendResp = await getDailyPopularVideos();
+        const trendData = trendResp?.data || [];
+
+        trendingVideos.value = trendData.map(dp => {
+          // endpoint returns DailyPopularVideo, which contains a `video` field
+          const v = dp?.video || dp;
+          return {
+            id: v.id,
+            title: v.title,
+            description: v.description,
+            thumbnail: `http://localhost:8080/${v.thumbnailPath}`,
+            channel: v.creator?.username || 'Unknown',
+            creatorId: v.creator?.id || null,
+            views: formatViews(v.viewCount),
+            uploadedAt: formatDate(v.createdAt),
+            duration: v.duration
+          };
+        });
+      } catch (e) {
+        console.warn('Failed to fetch daily popular videos:', e);
+        trendingVideos.value = [];
+      }
+    } else {
+      trendingVideos.value = [];
+    }
+
     // API uses 0-based pages, URL uses 1-based
     const response = await getVideosPaginated(currentPage.value - 1, videosPerPage);
     const data = response.data;
@@ -62,6 +96,10 @@ async function fetchVideos() {
       duration: video.duration
     }));
 
+    // Exclude trending videos from the paginated list for the "Other Videos" section
+    const trendingIds = new Set(trendingVideos.value.map(t => t.id));
+    otherVideos.value = videos.value.filter(v => !trendingIds.has(v.id));
+
     // Update pagination state from response metadata
     totalPages.value = data.totalPages;
     totalElements.value = data.totalElements;
@@ -81,6 +119,19 @@ async function fetchVideos() {
 watch(() => route.query.page, () => {
   fetchVideos();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// Fetch trending when auth state changes (so login without reload works)
+watch(() => isLoggedIn.value, (logged) => {
+  if (logged) {
+    // user just logged in: fetch videos (includes trending)
+    fetchVideos();
+  } else {
+    // user logged out: clear trending list immediately
+    trendingVideos.value = [];
+    // ensure otherVideos shows all videos
+    otherVideos.value = videos.value.slice();
+  }
 });
 
 // ----- Helper Functions -----
@@ -191,57 +242,104 @@ const pageNumbers = computed(() => {
       </div>
     </header>
 
-    <!-- Video Grid -->
+    <!-- Trending Now Section -->
     <main class="video-section">
-      <div class="section-header">
-        <h2>Trending Now</h2>
-        <span class="video-count">{{ totalElements }} videos</span>
+      <!-- Only show trending to logged-in users -->
+      <div v-if="isLoggedIn">
+        <div class="section-header">
+          <h2>Trending Now</h2>
+          <div class="section-actions">
+            <span class="video-count">{{ trendingVideos.length }} videos</span>
+          </div>
+        </div>
+
+        <!-- Trending Carousel / Loading / Empty -->
+        <div v-if="loading && trendingVideos.length === 0" class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading trending videos...</p>
+        </div>
+
+        <div v-else-if="!loading && trendingVideos.length === 0" class="empty-state">
+          <p>No trending videos found</p>
+        </div>
+
+        <div v-else class="trending-carousel" role="region" aria-label="Trending videos carousel">
+          <div class="trending-carousel-inner">
+            <article
+              v-for="video in trendingVideos"
+              :key="`trending-` + video.id"
+              class="trending-card video-card"
+              @click="goToVideo(video.id)"
+              tabindex="0"
+              @keydown.enter="goToVideo(video.id)"
+            >
+              <div class="thumbnail-wrapper">
+                <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
+
+                <div class="play-overlay">
+                  <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </div>
+
+              <div class="video-info">
+                <h3 class="video-title">{{ video.title }}</h3>
+                <div class="video-meta">
+                  <RouterLink
+                    v-if="video.creatorId"
+                    :to="{ name: 'user-profile', params: { id: video.creatorId } }"
+                    class="channel-name-link"
+                    @click.stop
+                  >
+                    {{ video.channel }}
+                  </RouterLink>
+                  <span v-else class="channel-name">{{ video.channel }}</span>
+                  <span class="meta-separator">•</span>
+                  <span class="view-count">{{ video.views }}</span>
+                  <span class="meta-separator">•</span>
+                  <span class="upload-time">{{ video.uploadedAt }}</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
       </div>
 
-      <!-- Loading State -->
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>Loading videos...</p>
+      <!-- Other Videos Section -->
+      <div class="section-header" style="margin-top: 2.5rem;">
+        <h2>Other Videos</h2>
+        <span class="video-count">{{ totalElements - trendingVideos.length }} videos</span>
       </div>
 
-      <!-- Error State -->
-      <div v-else-if="error" class="error-state">
+      <!-- Error State for other videos -->
+      <div v-if="error" class="error-state">
         <p>{{ error }}</p>
         <button @click="fetchVideos" class="retry-btn">Try Again</button>
       </div>
 
-      <!-- Empty State -->
-      <div v-else-if="videos.length === 0" class="empty-state">
-        <p>No videos found</p>
+      <!-- Empty State for other videos -->
+      <div v-else-if="!loading && otherVideos.length === 0" class="empty-state">
+        <p>No other videos found</p>
       </div>
 
-      <!-- Video Grid -->
+      <!-- Other Video Grid -->
       <div v-else class="video-grid">
         <article
-          v-for="video in videos"
+          v-for="video in otherVideos"
           :key="video.id"
           class="video-card"
           @click="goToVideo(video.id)"
         >
-          <!-- Thumbnail -->
           <div class="thumbnail-wrapper">
-            <img
-              :src="video.thumbnail"
-              :alt="video.title"
-              class="thumbnail"
-            />
+            <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
             <div class="play-overlay">
-              <svg
-                class="play-icon"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
+              <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8 5v14l11-7z" />
               </svg>
             </div>
           </div>
 
-          <!-- Video Info -->
           <div class="video-info">
             <h3 class="video-title">{{ video.title }}</h3>
             <div class="video-meta">
@@ -547,6 +645,62 @@ const pageNumbers = computed(() => {
 
 .meta-separator {
   color: #999;
+}
+
+/* Trending-specific styles */
+.trending-carousel {
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 1rem 0.25rem;
+  display: flex; /* make the scroll area itself a flex container so items can be centered */
+  justify-content: center;
+  scroll-snap-type: x mandatory; /* enable snap so each card centers */
+}
+
+.trending-carousel-inner {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  justify-content: center; /* center cards inside the inner container */
+  padding: 0 1rem;
+}
+
+.trending-card {
+  min-width: 340px;
+  max-width: 420px;
+  background: linear-gradient(180deg, #ffffff, #fffaf8);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  flex: 0 0 auto; /* ensure card width is preserved and cards don't stretch */
+  scroll-snap-align: center; /* center each card within the snap container */
+}
+
+.trending-card:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12);
+}
+
+.trending-card .thumbnail-wrapper {
+  aspect-ratio: 16 / 9;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Make play overlay slightly larger on trending cards */
+.trending-card .play-icon {
+  width: 56px;
+  height: 56px;
+}
+
+/* Ensure smooth horizontal scrolling visual */
+.trending-carousel::-webkit-scrollbar {
+  height: 10px;
+}
+.trending-carousel::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 999px;
 }
 
 /* Pagination */
