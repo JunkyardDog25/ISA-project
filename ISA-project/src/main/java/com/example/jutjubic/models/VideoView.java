@@ -4,6 +4,7 @@ import com.example.jutjubic.dto.VideoViewDto;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.Instant;
@@ -11,6 +12,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "video_views")
+@NoArgsConstructor
 @Getter @Setter
 public class VideoView {
     @Id
