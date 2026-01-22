@@ -1,7 +1,6 @@
 package com.example.jutjubic.models;
 
 import jakarta.persistence.*;
-import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -28,7 +27,6 @@ public class Comment {
     @JoinColumn(name = "video_id")
     private Video video;
 
-    @Size(max = 255)
     @Column(name = "content")
     private String content;
 

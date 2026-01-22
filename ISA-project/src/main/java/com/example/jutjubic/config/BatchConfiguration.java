@@ -1,9 +1,12 @@
 package com.example.jutjubic.config;
 
+import com.example.jutjubic.dto.CommentDto;
 import com.example.jutjubic.models.DailyPopularVideo;
 import com.example.jutjubic.models.VideoView;
 import com.example.jutjubic.repositories.DailyPopularVideoRepository;
 import com.example.jutjubic.repositories.VideoViewRepository;
+import com.example.jutjubic.services.CommentService;
+import com.example.jutjubic.services.LikeService;
 import com.example.jutjubic.utils.PopularityCalculator;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
@@ -23,6 +26,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -31,12 +35,21 @@ public class BatchConfiguration {
     private final PlatformTransactionManager transactionManager;
     private final VideoViewRepository videoViewRepository;
     private final DailyPopularVideoRepository dailyPopularVideoRepository;
+    private final CommentService commentService;
+    private final LikeService likeService;
 
-    public BatchConfiguration(JobRepository jobRepository, PlatformTransactionManager transactionManager, VideoViewRepository videoViewRepository, DailyPopularVideoRepository dailyPopularVideoRepository) {
+    public BatchConfiguration(JobRepository jobRepository,
+                              PlatformTransactionManager transactionManager,
+                              VideoViewRepository videoViewRepository,
+                              DailyPopularVideoRepository dailyPopularVideoRepository,
+                              CommentService commentService,
+                              LikeService likeService) {
         this.jobRepository = jobRepository;
         this.transactionManager = transactionManager;
         this.videoViewRepository = videoViewRepository;
         this.dailyPopularVideoRepository = dailyPopularVideoRepository;
+        this.commentService = commentService;
+        this.likeService = likeService;
     }
 
     @Bean
@@ -56,7 +69,23 @@ public class BatchConfiguration {
             if (videoView == null) {
                 return null;
             }
-            BigDecimal score =  PopularityCalculator.calculateScore(videoView);
+            long viewCount = videoView.getVideo().getViewCount();
+            if (viewCount == 0) {
+                DailyPopularVideo dailyPopularVideo = new DailyPopularVideo();
+                dailyPopularVideo.setVideo(videoView.getVideo());
+                dailyPopularVideo.setExecutionDate(LocalDate.now());
+                dailyPopularVideo.setPopularityScore(0.0);
+                return dailyPopularVideo;
+            }
+
+            long commentCount = commentService.getCommentCount(videoView.getVideo().getId());
+            long likeCount = likeService.getLikeCount(videoView.getVideo().getId());
+
+            long engagement_rate = likeCount + commentCount * 2;
+
+            Double score = PopularityCalculator.calculateScore(videoView);
+            score = score + engagement_rate;
+
             DailyPopularVideo dailyPopularVideo = new DailyPopularVideo();
             dailyPopularVideo.setVideo(videoView.getVideo());
             dailyPopularVideo.setExecutionDate(LocalDate.now());

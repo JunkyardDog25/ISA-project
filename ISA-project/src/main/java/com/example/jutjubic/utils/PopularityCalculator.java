@@ -7,7 +7,6 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 
-// ... existing code ...
 public final class PopularityCalculator {
     private PopularityCalculator() {}
 
@@ -19,9 +18,9 @@ public final class PopularityCalculator {
      * @param event VideoView event
      * @return popularity score (double)
      */
-    public static BigDecimal calculateScore(VideoView event) {
+    public static Double calculateScore(VideoView event) {
         if (event == null || event.getVideo() == null || event.getCreatedAt() == null) {
-            return BigDecimal.ZERO;
+            return 0.0;
         }
 
         LocalDate today = LocalDate.now(ZoneId.systemDefault());
@@ -31,9 +30,10 @@ public final class PopularityCalculator {
 
         // Only consider views from 1..7 days ago
         if (daysAgo >= 1 && daysAgo <= 7) {
-            return BigDecimal.valueOf(event.getVideo().getViewCount() * (8 - daysAgo));
+            long score = event.getVideo().getViewCount() * (8 - daysAgo);
+            return (double) score;
         }
 
-        return BigDecimal.ZERO;
+        return 0.0;
     }
 }
