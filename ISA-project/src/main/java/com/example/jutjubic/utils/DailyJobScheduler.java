@@ -25,7 +25,7 @@ public class DailyJobScheduler {
         this.dailyPopularVideoRepository = dailyPopularVideoRepository;
     }
 
-    @Scheduled(cron = "@daily")
+    @Scheduled(cron = "0 0 12 * * *")
     public void runDailyJob() {
         logger.info("Starting scheduled daily batch job...");
         try {

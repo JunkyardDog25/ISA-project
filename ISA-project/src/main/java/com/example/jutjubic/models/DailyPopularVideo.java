@@ -27,5 +27,5 @@ public class DailyPopularVideo {
     private LocalDate executionDate;
 
     @Column(name = "popularity_score", precision = 10)
-    private BigDecimal popularityScore;
+    private Double popularityScore;
 }

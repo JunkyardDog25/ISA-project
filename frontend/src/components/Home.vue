@@ -667,14 +667,13 @@ const pageNumbers = computed(() => {
 }
 
 .trending-card {
-  min-width: 340px;
-  max-width: 420px;
+  width: clamp(300px, 42vw, 420px);
   background: linear-gradient(180deg, #ffffff, #fffaf8);
   border-radius: 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
   transition: transform 0.18s ease, box-shadow 0.18s ease;
-  flex: 0 0 auto; /* ensure card width is preserved and cards don't stretch */
-  scroll-snap-align: center; /* center each card within the snap container */
+  flex: 0 0 auto;
+  scroll-snap-align: center;
 }
 
 .trending-card:hover {
@@ -824,6 +823,19 @@ const pageNumbers = computed(() => {
     min-width: 36px;
     height: 36px;
     font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .trending-card {
+    width: calc(100% - 2rem);
+  }
+  .trending-carousel {
+    padding: 0.75rem 0.75rem;
+  }
+  .trending-carousel-inner {
+    padding: 0 0.5rem;
+    gap: 0.75rem;
   }
 }
 </style>
