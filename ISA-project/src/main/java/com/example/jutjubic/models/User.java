@@ -55,6 +55,12 @@ public class User implements UserDetails {
     @Column
     private LocalDateTime updatedAt;
 
+    @Column
+    private Double latitude;
+
+    @Column
+    private Double longitude;
+
     private boolean enabled;
 
     public User(String username, String password, String email, String firstName, String lastName, String address) {

@@ -10,4 +10,6 @@ import lombok.Setter;
 public class LoginUserDto {
     private String email;
     private String password;
+    // optional location as "lat,lon" (e.g. "45.8150,15.9819")
+    private String location;
 }

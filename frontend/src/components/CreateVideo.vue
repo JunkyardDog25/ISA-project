@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
@@ -8,7 +8,7 @@ import ToastContainer from '@/components/common/ToastContainer.vue';
 
 // Router & Auth
 const router = useRouter();
-const { isLoggedIn } = useAuth();
+const { isLoggedIn, user } = useAuth();
 const { showError, showSuccess } = useToast();
 
 // Form state
@@ -18,13 +18,17 @@ const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB in bytes
 const form = ref({
   title: '',
   description: '',
-  tags: '',
-  country: ''
+  tags: ''
 });
 
 // File uploads
 const videoFile = ref(null);
 const thumbnailFile = ref(null);
+
+// Location state
+const showLocationModal = ref(false);
+const locationStatus = ref('pending'); // 'pending', 'allowed', 'denied'
+const userLocation = ref(null); // { lat, lon } or null
 
 // Track which fields have been touched (blurred)
 const touched = ref({
@@ -58,6 +62,70 @@ function formatFileSize(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
+
+// ----- Location Handling -----
+
+// Promise wrapper for browser geolocation with timeout
+function getBrowserLocation(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(null);
+      }
+    }, timeoutMs);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      },
+      () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(null);
+      },
+      { enableHighAccuracy: false, timeout: timeoutMs }
+    );
+  });
+}
+
+async function handleAllowLocation() {
+  showLocationModal.value = false;
+  const loc = await getBrowserLocation(5000);
+  if (loc) {
+    userLocation.value = loc;
+    locationStatus.value = 'allowed';
+    showSuccess('Location enabled for this video');
+  } else {
+    locationStatus.value = 'denied';
+    showError('Could not get your location. Video will be created without location.');
+  }
+}
+
+function handleDenyLocation() {
+  showLocationModal.value = false;
+  locationStatus.value = 'denied';
+  userLocation.value = null;
+}
+
+// Show location modal on mount if user hasn't decided yet
+onMounted(() => {
+  // Check if user already allowed location during login
+  if (user.value?.locationAllowed && user.value?.latitude && user.value?.longitude) {
+    // Pre-fill with user's stored location
+    userLocation.value = { lat: user.value.latitude, lon: user.value.longitude };
+    locationStatus.value = 'allowed';
+  } else {
+    // Show the modal to ask for location
+    showLocationModal.value = true;
+  }
+});
 
 // ----- Form Submission -----
 
@@ -116,9 +184,13 @@ async function onSubmit() {
       formData.append('description', form.value.description);
     }
     formData.append('tags', form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : '');
-    if (form.value.country) {
-      formData.append('country', form.value.country);
+
+    // Add location if available
+    if (userLocation.value) {
+      formData.append('latitude', userLocation.value.lat);
+      formData.append('longitude', userLocation.value.lon);
     }
+
     formData.append('videoFile', videoFile.value);
     formData.append('thumbnailFile', thumbnailFile.value);
 
@@ -235,15 +307,26 @@ function handleCreateError(e) {
           </span>
         </div>
 
-        <!-- Country -->
-        <div class="form-group">
-          <label for="country">Geographic Location (Optional)</label>
-          <input
-            id="country"
-            v-model="form.country"
-            type="text"
-            placeholder="e.g., Serbia"
-          />
+        <!-- Location Status -->
+        <div class="form-group location-status">
+          <label>Location</label>
+          <div class="location-info">
+            <span v-if="locationStatus === 'allowed'" class="location-enabled">
+              <svg class="location-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              Location enabled
+            </span>
+            <span v-else class="location-disabled">
+              <svg class="location-icon" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 6.5c1.38 0 2.5 1.12 2.5 2.5 0 .74-.33 1.39-.83 1.85l3.63 3.63c.98-1.86 1.7-3.8 1.7-5.48 0-3.87-3.13-7-7-7-1.98 0-3.76.83-5.04 2.15l3.19 3.19c.46-.5 1.11-.84 1.85-.84zM3.41 2.86L2 4.27l2.62 2.62C4.23 7.59 4 8.27 4 9c0 5.25 7 13 7 13l2.07-2.42 3.49 3.49 1.41-1.41L3.41 2.86z"/>
+              </svg>
+              Location disabled
+            </span>
+            <button type="button" class="change-location-btn" @click="showLocationModal = true">
+              Change
+            </button>
+          </div>
         </div>
 
         <!-- Submit button -->
@@ -261,6 +344,23 @@ function handleCreateError(e) {
 
     <!-- Toast Container -->
     <ToastContainer />
+
+    <!-- Location Permission Modal -->
+    <div v-if="showLocationModal" class="location-modal-overlay">
+      <div class="location-modal">
+        <div class="modal-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+          </svg>
+        </div>
+        <h3>Add location to your video?</h3>
+        <p>Adding your location helps viewers discover videos from their area. Your exact coordinates will be stored with the video.</p>
+        <div class="modal-actions">
+          <button type="button" @click="handleDenyLocation" class="btn-secondary">No thanks</button>
+          <button type="button" @click="handleAllowLocation" class="btn-primary">Allow location</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -489,5 +589,147 @@ textarea::placeholder {
   .grid-2 {
     grid-template-columns: 1fr;
   }
+}
+
+/* Location Status */
+.location-status {
+  margin-top: 0.5rem;
+}
+
+.location-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.location-enabled {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #28a745;
+  font-weight: 500;
+}
+
+.location-disabled {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #6c757d;
+}
+
+.location-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.change-location-btn {
+  margin-left: auto;
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.change-location-btn:hover {
+  border-color: #ff0000;
+  color: #ff0000;
+}
+
+/* Location Modal */
+.location-modal-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.location-modal {
+  background: #fff;
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  text-align: center;
+}
+
+.modal-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 1rem;
+  background: #fff0f0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-icon svg {
+  width: 32px;
+  height: 32px;
+  color: #ff0000;
+}
+
+.location-modal h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  color: #111;
+}
+
+.location-modal p {
+  color: #666;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: #ff0000;
+  color: #fff;
+  padding: 0.7rem 1.25rem;
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #e60000;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #333;
+  padding: 0.7rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  border-color: #999;
 }
 </style>

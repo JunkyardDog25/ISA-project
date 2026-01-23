@@ -25,7 +25,6 @@ public class VideoDto {
     private Time duration;
     private Boolean transcoded;
     private LocalDateTime scheduledAt;
-    private String country;
     private Long viewCount;
     private User user;
 }
