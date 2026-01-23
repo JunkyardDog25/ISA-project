@@ -20,7 +20,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.servlet.http.HttpServletRequest;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -71,13 +76,56 @@ public class VideoService {
                 videoDto.getDuration() != null ? videoDto.getDuration() : new Time(0),
                 videoDto.getTranscoded() != null ? videoDto.getTranscoded() : false,
                 videoDto.getScheduledAt(),
-                videoDto.getCountry(),
                 null, // tags - not in VideoDto, can be null
                 videoDto.getViewCount() != null ? videoDto.getViewCount() : 0,
                 videoDto.getUser()
         );
 
         return videoRepository.save(video);
+    }
+
+    /**
+     * Creates a new video transactionally with file upload.
+     * The entire operation is wrapped in a transaction that will be rolled back
+     * if any error occurs during video creation.
+     *
+     * @param title Video title
+     * @param description Video description
+     * @param tags Video tags (comma-separated)
+     * @param latitude Video location latitude (optional)
+     * @param longitude Video location longitude (optional)
+     * @param videoFile Video file (MP4, max 200MB)
+     * @param thumbnailFile Thumbnail image file
+     * @param user Authenticated user creating the video
+     * @return Created Video entity
+     * @throws IllegalArgumentException if validation fails
+     * @throws IOException if file saving fails
+     * @throws RuntimeException if user is not found or any other error occurs
+     */
+    @Transactional(rollbackFor = {Exception.class})
+    public Video createVideoWithFiles(String title, String description, String tags,
+                                      Double latitude, Double longitude,
+                                      MultipartFile videoFile, MultipartFile thumbnailFile,
+                                      User user) throws IOException {
+        logger.debug("Starting transactional video creation with files for user: {}", user.getId());
+
+        // Create DTO from form data and files
+        CreateVideoDto createVideoDto = new CreateVideoDto();
+        createVideoDto.setTitle(title);
+        createVideoDto.setDescription(description);
+        createVideoDto.setTags(tags);
+        createVideoDto.setLatitude(latitude);
+        createVideoDto.setLongitude(longitude);
+        createVideoDto.setFileSize(videoFile.getSize());
+
+        // Save files and set paths
+        String videoPath = saveVideoFile(videoFile);
+        String thumbnailPath = saveThumbnailFile(thumbnailFile);
+
+        createVideoDto.setVideoPath(videoPath);
+        createVideoDto.setThumbnailPath(thumbnailPath);
+
+        return createVideo(createVideoDto, user);
     }
 
     /**
@@ -116,14 +164,19 @@ public class VideoService {
                 createVideoDto.getThumbnailPath(),
                 null, // thumbnailCompressedPath - not needed for creation
                 createVideoDto.getFileSize() != null ? createVideoDto.getFileSize() : 0L,
-                new Time(0), // duration - will be set later if needed
+                createVideoDto.getDuration() != null ? createVideoDto.getDuration() : new Time(0), // duration from extracted metadata
                 false, // transcoded - default false
                 null, // scheduledAt - not needed for immediate posting
-                createVideoDto.getCountry(),
                 createVideoDto.getTags(),
                 0L, // viewCount - starts at 0
                 managedUser
         );
+
+        // Set location if provided
+        if (createVideoDto.getLatitude() != null && createVideoDto.getLongitude() != null) {
+            video.setLatitude(createVideoDto.getLatitude());
+            video.setLongitude(createVideoDto.getLongitude());
+        }
 
         // Save video - this will be committed when transaction completes successfully
         Video savedVideo = videoRepository.save(video);
@@ -246,5 +299,141 @@ public class VideoService {
 
         // Return the web-accessible path so it can be saved in DB and served via /media/** mapping
         return "media/" + THUMBNAILS_DIR + "/" + filename;
+    }
+
+    /**
+     * Find videos within a radius from a given center point.
+     * @param centerLat latitude of center
+     * @param centerLon longitude of center
+     * @param radius radius value in units specified by `units` (m, km, mi)
+     * @param units "m" (meters), "km" (kilometers) or "mi" (miles)
+     * @param page page index (0-based)
+     * @param size page size
+     */
+    public PageResponse<Video> findVideosNearby(double centerLat, double centerLon, double radius, String units, int page, int size) {
+        if (centerLat < -90 || centerLat > 90) throw new IllegalArgumentException("Latitude must be between -90 and 90");
+        if (centerLon < -180 || centerLon > 180) throw new IllegalArgumentException("Longitude must be between -180 and 180");
+        if (radius <= 0) throw new IllegalArgumentException("Radius must be positive");
+
+        double radiusMeters;
+        if (units == null || units.isEmpty() || "km".equalsIgnoreCase(units)) {
+            radiusMeters = radius * 1000.0;
+        } else if ("m".equalsIgnoreCase(units)) {
+            radiusMeters = radius;
+        } else if ("mi".equalsIgnoreCase(units) || "mile".equalsIgnoreCase(units) || "miles".equalsIgnoreCase(units)) {
+            radiusMeters = radius * 1609.344;
+        } else {
+            throw new IllegalArgumentException("Unsupported units: " + units);
+        }
+
+        // Limit radius to reasonable maximum (e.g., 100 km)
+        double MAX_RADIUS_METERS = 1_000_000;
+        if (radiusMeters > MAX_RADIUS_METERS) {
+            throw new IllegalArgumentException("Radius too large. Maximum allowed is " + (MAX_RADIUS_METERS / 1000.0) + " km");
+        }
+
+        // compute bounding box
+        // 1 degree latitude ~= 111.32 km
+        double latDegreeMeters = 111320.0;
+        double deltaLat = radiusMeters / latDegreeMeters;
+
+        // longitude degrees depend on latitude
+        double lonDegreeMeters = 111320.0 * Math.cos(Math.toRadians(centerLat));
+        if (lonDegreeMeters <= 0) lonDegreeMeters = 1; // guard
+        double deltaLon = radiusMeters / lonDegreeMeters;
+
+        double minLat = centerLat - deltaLat;
+        double maxLat = centerLat + deltaLat;
+        double minLon = centerLon - deltaLon;
+        double maxLon = centerLon + deltaLon;
+
+        int validPage = Math.max(0, page);
+        int validSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "created_at"));
+
+        Page<Video> videoPage = videoRepository.findNearby(minLat, maxLat, minLon, maxLon, centerLat, centerLon, radiusMeters, pageable);
+        videoPage.getContent().forEach(v -> v.setViewCount(videoViewRepository.countVideoViewByVideo_Id(v.getId())));
+
+        return PageResponse.from(videoPage);
+    }
+
+    /**
+     * Get user with location data from database.
+     * @param userId User ID
+     * @return User entity with location data or null if not found
+     */
+    public User getUserWithLocation(UUID userId) {
+        if (userId == null) return null;
+        return userService.getUserById(userId);
+    }
+
+    /**
+     * Approximate user location based on IP address using ip-api.com free service.
+     * @param request HTTP request to extract client IP from
+     * @return double array [latitude, longitude] or null if approximation fails
+     */
+    public double[] approximateLocationByIp(HttpServletRequest request) {
+        if (request == null) return null;
+
+        try {
+            String ip = extractClientIp(request);
+            if (ip == null || ip.isBlank() || "127.0.0.1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip)) {
+                // Localhost - can't geolocate, return null
+                return null;
+            }
+
+            URL url = new URL("http://ip-api.com/json/" + ip + "?fields=status,message,lat,lon");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(2000);
+            conn.setReadTimeout(2000);
+            int code = conn.getResponseCode();
+            if (code != 200) return null;
+
+            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = in.readLine()) != null) sb.append(line);
+            in.close();
+            String body = sb.toString();
+
+            if (body.contains("\"status\":\"success\"")) {
+                String latStr = extractJsonValue(body, "lat");
+                String lonStr = extractJsonValue(body, "lon");
+                if (latStr != null && lonStr != null) {
+                    return new double[] { Double.parseDouble(latStr), Double.parseDouble(lonStr) };
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("IP geolocation approximation failed: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private String extractClientIp(HttpServletRequest request) {
+        String xfHeader = request.getHeader("X-Forwarded-For");
+        if (xfHeader != null && !xfHeader.isBlank()) {
+            return xfHeader.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
+    }
+
+    private String extractJsonValue(String json, String key) {
+        String look = "\"" + key + "\":";
+        int idx = json.indexOf(look);
+        if (idx < 0) return null;
+        int start = idx + look.length();
+        while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '"')) start++;
+        int end = start;
+        boolean isString = json.charAt(start) == '"';
+        if (isString) {
+            start++;
+            end = json.indexOf('"', start);
+            if (end < 0) return null;
+            return json.substring(start, end);
+        } else {
+            while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '.' || json.charAt(end) == '-')) end++;
+            return json.substring(start, end);
+        }
     }
 }

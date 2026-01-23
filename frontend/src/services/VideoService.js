@@ -138,3 +138,19 @@ export function incrementViewCount(videoId) {
 export function getDailyPopularVideos() {
   return api.get(`/api/daily-popular-videos`);
 }
+
+/**
+ * Search videos nearby using spatial search on the server.
+ * @param {string} location - "lat,lon" (optional - if omitted, server uses user's stored location or IP approximation)
+ * @param {number} radius - radius value in given units
+ * @param {string} units - "km" | "m" | "mi"
+ * @param {number} page - 0-based page
+ * @param {number} size - page size
+ */
+export function getVideosNearby({ location = null, radius = 5, units = 'km', page = 0, size = 16 }) {
+  const params = { radius, units, page, size };
+  if (location) {
+    params.location = location;
+  }
+  return api.get('/api/videos/nearby', { params });
+}

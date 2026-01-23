@@ -6,7 +6,6 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.sql.Time;
-import java.time.LocalDateTime;
 
 /**
  * DTO for creating a new video by authenticated user
@@ -22,5 +21,7 @@ public class CreateVideoDto {
     private String videoPath;
     private String thumbnailPath;
     private Long fileSize;
-    private String country;
+    private Double latitude;
+    private Double longitude;
+    private Time duration;
 }

@@ -45,4 +45,20 @@ public class PageResponse<T> {
             page.isEmpty()
         );
     }
+
+    /**
+     * Create an empty PageResponse (useful for error cases where you still want a consistent payload shape).
+     */
+    public static <T> PageResponse<T> empty() {
+        return new PageResponse<>(
+                List.of(),
+                0,
+                0,
+                0L,
+                0,
+                true,
+                true,
+                true
+        );
+    }
 }
