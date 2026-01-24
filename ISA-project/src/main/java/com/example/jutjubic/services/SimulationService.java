@@ -69,8 +69,8 @@ public class SimulationService {
     }
 
     /**
-     * Run concentrated area simulation - many requests from small geographic area.
-     * Simulates scenario: "veliki broj aktivnosti se dešava na relativno malom prostoru"
+     * Runs a simulation where we get lots of requests from a small area.
+     * This tests what happens when "veliki broj aktivnosti se dešava na relativno malom prostoru"
      */
     public SimulationResultDto runConcentratedSimulation(int requestCount, double radiusKm) {
         logger.info("Starting CONCENTRATED simulation: {} requests, radius {}km", requestCount, radiusKm);
@@ -87,7 +87,8 @@ public class SimulationService {
     }
 
     /**
-     * Run mixed simulation - combination of both patterns.
+     * Runs a mixed simulation that combines both concentrated and distributed patterns.
+     * This gives us a more realistic scenario.
      */
     public SimulationResultDto runMixedSimulation(int requestCount, double radiusKm) {
         logger.info("Starting MIXED simulation: {} requests, radius {}km", requestCount, radiusKm);
@@ -215,7 +216,7 @@ public class SimulationService {
 
         Map<String, Set<String>> videoIdsByLocation = new HashMap<>();
 
-        // Get trending/nearby results for each location in the same street
+        // First, let's see what videos each location on the same street gets
         for (TestRegion region : SAME_STREET_REGIONS) {
             try {
                 PageResponse<Video> response = videoService.findVideosNearby(
@@ -325,7 +326,7 @@ public class SimulationService {
                 "ne menja drastično iz sata u sat.", avgComputeMs, avgTrendingFetchMs
             );
         } else if (avgComputeMs < 5000) {
-            // Moderate compute time - daily is optimal
+            // Takes a bit of time, but not too bad - once a day is probably the sweet spot
             recommendedFrequency = "DAILY";
             rationale = String.format(
                 "Vreme računanja trendinga (%.0fms) je umereno. DAILY frekvencija predstavlja " +
@@ -333,7 +334,7 @@ public class SimulationService {
                 "Preporučuje se pokretanje u periodima niskog opterećenja (npr. 04:00).", avgComputeMs
             );
         } else {
-            // Slow compute - consider less frequent or async
+            // This is taking a while - we should probably do it less often or make it async
             recommendedFrequency = "DAILY sa ASYNC obradom";
             rationale = String.format(
                 "Vreme računanja trendinga (%.0fms) je značajno. Preporučuje se: " +
@@ -363,19 +364,19 @@ public class SimulationService {
     }
 
     /**
-     * Analyze if trending operations impact basic app functionality.
-     * Answers: "Operacije potrebne za određivanje lokalnog trendinga ne smeju da narušavaju performanse osnovnih funkcionalnosti aplikacije."
+     * Checks if calculating trending slows down the rest of the app.
+     * This answers: "Operacije potrebne za određivanje lokalnog trendinga ne smeju da narušavaju performanse osnovnih funkcionalnosti aplikacije."
      */
     public TrendingAnalysisDto analyzePerformanceImpact() {
         logger.info("Analyzing performance impact of trending operations");
 
-        // Get baseline performance (nearby search without trending compute)
+        // First, let's see how fast things normally run when we're not calculating trending
         var nearbyReport = performanceMetricsService.getReport("NEARBY_SEARCH", 60);
         double baselineMs = nearbyReport.getAvgResponseTimeMs();
 
-        // Simulate load during trending compute
-        // In real scenario, this would measure actual impact during batch job
-        double duringComputeMs = baselineMs * 1.1; // Assume 10% overhead estimate
+        // Now let's estimate what happens when trending is being calculated
+        // In a real scenario, we'd measure this during an actual batch job run
+        double duringComputeMs = baselineMs * 1.1; // Rough guess: about 10% slower
 
         double impactPercent = baselineMs > 0 ? ((duringComputeMs - baselineMs) / baselineMs) * 100 : 0;
         boolean impacts = impactPercent > 20; // >20% degradation is significant
@@ -460,7 +461,7 @@ public class SimulationService {
         return results;
     }
 
-    // Helper methods
+    // These are just utility methods to help with calculations
 
     private double calculatePercentile(List<Long> sortedValues, int percentile) {
         if (sortedValues.isEmpty()) return 0;
