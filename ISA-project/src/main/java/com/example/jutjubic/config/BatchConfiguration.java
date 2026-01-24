@@ -1,6 +1,5 @@
 package com.example.jutjubic.config;
 
-import com.example.jutjubic.dto.CommentDto;
 import com.example.jutjubic.models.DailyPopularVideo;
 import com.example.jutjubic.models.VideoView;
 import com.example.jutjubic.repositories.DailyPopularVideoRepository;
@@ -24,9 +23,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.Map;
 
 @Configuration

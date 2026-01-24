@@ -8,6 +8,8 @@ import UserVerification from '@/components/UserVerification.vue';
 import VideoPlayer from '@/components/VideoPlayer.vue';
 import CreateVideo from '@/components/CreateVideo.vue';
 import UserProfile from '@/components/UserProfile.vue';
+import PerformanceDashboard from '@/components/PerformanceDashboard.vue';
+import SimulationDashboard from '@/components/SimulationDashboard.vue';
 
 // ----- Route Definitions -----
 
@@ -50,6 +52,16 @@ const routes = [
     name: 'create-video',
     component: CreateVideo,
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/performance',
+    name: 'performance',
+    component: PerformanceDashboard
+  },
+  {
+    path: '/simulation',
+    name: 'simulation',
+    component: SimulationDashboard
   }
 ];
 

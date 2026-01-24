@@ -92,6 +92,20 @@ class VideoController {
         return ResponseEntity.ok(video);
     }
 
+    /**
+     * Get nearby search configuration parameters.
+     * Returns the configurable default values for nearby video search.
+     *
+     * @return Map containing defaultRadius, maxRadius, and defaultUnits
+     */
+    @GetMapping("/nearby/config")
+    public ResponseEntity<java.util.Map<String, Object>> getNearbyConfig() {
+        java.util.Map<String, Object> config = new java.util.HashMap<>();
+        config.put("defaultRadius", videoService.getDefaultRadiusKm());
+        config.put("maxRadius", videoService.getMaxRadiusKm());
+        config.put("defaultUnits", videoService.getDefaultUnits());
+        return ResponseEntity.ok(config);
+    }
 
     @PutMapping("/{videoId}/views")
     public ResponseEntity<ViewResponseDto> incrementViews(@PathVariable UUID videoId) {
@@ -99,16 +113,32 @@ class VideoController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * Search for videos near a specified location.
+     * Uses spatial indexing with bounding box pre-filtering for optimal performance.
+     *
+     * @param location Optional location as "lat,lon" string. If not provided, uses user's stored location or IP approximation.
+     * @param radius Search radius. If not provided or <= 0, uses configured default from application.properties.
+     * @param units Distance units (km, m, mi). If not provided, uses configured default from application.properties.
+     * @param page Page number (0-based)
+     * @param size Page size
+     * @param request HTTP request for IP-based location approximation fallback
+     * @return Paginated list of videos within the search radius
+     */
     @GetMapping("/nearby")
     public ResponseEntity<PageResponse<Video>> searchNearby(
             @RequestParam(value = "location", required = false) String location,
-            @RequestParam(value = "radius", defaultValue = "5") double radius,
-            @RequestParam(value = "units", defaultValue = "km") String units,
+            @RequestParam(value = "radius", required = false, defaultValue = "-1") double radius,
+            @RequestParam(value = "units", required = false) String units,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "16") int size,
             jakarta.servlet.http.HttpServletRequest request
     ) {
         try {
+            // Use configured defaults if not provided in request
+            double effectiveRadius = (radius <= 0) ? videoService.getDefaultRadiusKm() : radius;
+            String effectiveUnits = (units == null || units.isEmpty()) ? videoService.getDefaultUnits() : units;
+
             double lat;
             double lon;
 
@@ -152,7 +182,7 @@ class VideoController {
                 }
             }
 
-            PageResponse<Video> videos = videoService.findVideosNearby(lat, lon, radius, units, page, size);
+            PageResponse<Video> videos = videoService.findVideosNearby(lat, lon, effectiveRadius, effectiveUnits, page, size);
             return ResponseEntity.ok(videos);
         } catch (NumberFormatException e) {
             logger.error("Invalid location format", e);

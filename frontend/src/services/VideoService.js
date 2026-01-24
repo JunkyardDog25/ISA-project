@@ -147,10 +147,27 @@ export function getDailyPopularVideos() {
  * @param {number} page - 0-based page
  * @param {number} size - page size
  */
-export function getVideosNearby({ location = null, radius = 5, units = 'km', page = 0, size = 16 }) {
-  const params = { radius, units, page, size };
+export function getVideosNearby({ location = null, radius = null, units = null, page = 0, size = 16 }) {
+  const params = { page, size };
   if (location) {
     params.location = location;
   }
+  // Only include radius/units if provided - server will use configured defaults otherwise
+  if (radius !== null && radius > 0) {
+    params.radius = radius;
+  }
+  if (units) {
+    params.units = units;
+  }
   return api.get('/api/videos/nearby', { params });
 }
+
+/**
+ * Get nearby search configuration from server.
+ * Returns configured default values for radius, max radius, and units.
+ * @returns {Promise} - Axios response promise with { defaultRadius, maxRadius, defaultUnits }
+ */
+export function getNearbyConfig() {
+  return api.get('/api/videos/nearby/config');
+}
+
