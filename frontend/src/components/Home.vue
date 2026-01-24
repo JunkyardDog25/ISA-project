@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
-import { getVideosPaginated, getDailyPopularVideos, getVideosNearby } from '@/services/VideoService.js';
+import { getVideosPaginated, getDailyPopularVideos, getVideosNearby, getNearbyConfig } from '@/services/VideoService.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -41,9 +41,27 @@ const nearbyResults = ref([]);
 const nearbyPage = ref(0);
 const nearbyTotalPages = ref(0);
 const nearbyTotalElements = ref(0);
-const nearbyRadius = ref(5); // default
-const nearbyUnits = ref('km');
+const nearbyRadius = ref(5); // will be overwritten by server config
+const nearbyUnits = ref('km'); // will be overwritten by server config
+const nearbyMaxRadius = ref(100); // will be overwritten by server config
+const nearbyConfigLoaded = ref(false);
 const nearbyLocationStr = ref(null); // remember last used location ("lat,lon" or null for IP-based)
+
+// Load nearby search configuration from server
+async function loadNearbyConfig() {
+  if (nearbyConfigLoaded.value) return;
+  try {
+    const resp = await getNearbyConfig();
+    if (resp.data) {
+      nearbyRadius.value = resp.data.defaultRadius || 5;
+      nearbyUnits.value = resp.data.defaultUnits || 'km';
+      nearbyMaxRadius.value = resp.data.maxRadius || 100;
+      nearbyConfigLoaded.value = true;
+    }
+  } catch (e) {
+    console.warn('Failed to load nearby config, using defaults:', e);
+  }
+}
 
 // Helper to map API video object to local view model (reuse for both lists)
 function mapApiVideo(v) {
@@ -234,10 +252,14 @@ async function initNearbySearch() {
 }
 
 // Toggle nearby search and auto-fetch
-function toggleNearbySearch() {
+async function toggleNearbySearch() {
   showNearby.value = !showNearby.value;
-  if (showNearby.value && nearbyResults.value.length === 0) {
-    initNearbySearch();
+  if (showNearby.value) {
+    // Load config from server on first toggle
+    await loadNearbyConfig();
+    if (nearbyResults.value.length === 0) {
+      initNearbySearch();
+    }
   }
 }
 
@@ -417,6 +439,16 @@ const pageNumbers = computed(() => {
 
           <!-- Nearby Search Controls in Header -->
           <div class="header-controls">
+            <!-- Admin/Testing Links -->
+            <div class="admin-links">
+              <RouterLink to="/performance" class="admin-link" title="Performance Metrics [S2]">
+                📊 Performance
+              </RouterLink>
+              <RouterLink to="/simulation" class="admin-link" title="Simulation Testing [S3]">
+                🧪 Simulation
+              </RouterLink>
+            </div>
+
             <div class="nearby-controls">
               <label class="nearby-toggle">
                 <input
@@ -431,11 +463,12 @@ const pageNumbers = computed(() => {
                 <input
                   type="number"
                   min="0.1"
+                  :max="nearbyMaxRadius"
                   step="0.1"
                   v-model.number="nearbyRadius"
                   @change="onRadiusChange"
                   class="radius-input-sm"
-                  title="Search radius"
+                  :title="`Search radius (max: ${nearbyMaxRadius} ${nearbyUnits})`"
                 />
                 <select
                   v-model="nearbyUnits"
@@ -838,6 +871,32 @@ const pageNumbers = computed(() => {
 
 .toggle-label {
   white-space: nowrap;
+}
+
+/* Admin/Testing Links */
+.admin-links {
+  display: flex;
+  gap: 0.5rem;
+  margin-right: 1rem;
+}
+
+.admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.8rem;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+.admin-link:hover {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .radius-controls-header {

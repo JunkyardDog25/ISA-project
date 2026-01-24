@@ -12,6 +12,7 @@ import com.example.jutjubic.repositories.VideoViewRepository;
 import com.example.jutjubic.utils.PageResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -43,15 +44,27 @@ public class VideoService {
     private static final String VIDEOS_DIR = "videos";
     private static final String THUMBNAILS_DIR = "thumbnails";
 
+    // Configurable nearby search parameters
+    @Value("${nearby.default-radius-km:5.0}")
+    private double defaultRadiusKm;
+
+    @Value("${nearby.max-radius-km:100.0}")
+    private double maxRadiusKm;
+
+    @Value("${nearby.default-units:km}")
+    private String defaultUnits;
+
     private final VideoRepository videoRepository;
     private final VideoViewRepository videoViewRepository;
-
     private final UserService userService;
+    private final PerformanceMetricsService performanceMetricsService;
 
-    public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository, UserService userService) {
+    public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository,
+                       UserService userService, PerformanceMetricsService performanceMetricsService) {
         this.videoRepository = videoRepository;
         this.videoViewRepository = videoViewRepository;
         this.userService = userService;
+        this.performanceMetricsService = performanceMetricsService;
 
         // Ensure directories exist
         try {
@@ -303,36 +316,41 @@ public class VideoService {
 
     /**
      * Find videos within a radius from a given center point.
+     * Uses configurable radius limits from application.properties.
+     *
      * @param centerLat latitude of center
      * @param centerLon longitude of center
-     * @param radius radius value in units specified by `units` (m, km, mi)
-     * @param units "m" (meters), "km" (kilometers) or "mi" (miles)
+     * @param radius radius value in units specified by `units` (m, km, mi). If <= 0, uses default from config.
+     * @param units "m" (meters), "km" (kilometers) or "mi" (miles). If null/empty, uses default from config.
      * @param page page index (0-based)
      * @param size page size
      */
     public PageResponse<Video> findVideosNearby(double centerLat, double centerLon, double radius, String units, int page, int size) {
         if (centerLat < -90 || centerLat > 90) throw new IllegalArgumentException("Latitude must be between -90 and 90");
         if (centerLon < -180 || centerLon > 180) throw new IllegalArgumentException("Longitude must be between -180 and 180");
-        if (radius <= 0) throw new IllegalArgumentException("Radius must be positive");
+
+        // Use configured defaults if not provided
+        String effectiveUnits = (units == null || units.isEmpty()) ? defaultUnits : units;
+        double effectiveRadius = (radius <= 0) ? defaultRadiusKm : radius;
 
         double radiusMeters;
-        if (units == null || units.isEmpty() || "km".equalsIgnoreCase(units)) {
-            radiusMeters = radius * 1000.0;
-        } else if ("m".equalsIgnoreCase(units)) {
-            radiusMeters = radius;
-        } else if ("mi".equalsIgnoreCase(units) || "mile".equalsIgnoreCase(units) || "miles".equalsIgnoreCase(units)) {
-            radiusMeters = radius * 1609.344;
+        if ("km".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius * 1000.0;
+        } else if ("m".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius;
+        } else if ("mi".equalsIgnoreCase(effectiveUnits) || "mile".equalsIgnoreCase(effectiveUnits) || "miles".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius * 1609.344;
         } else {
-            throw new IllegalArgumentException("Unsupported units: " + units);
+            throw new IllegalArgumentException("Unsupported units: " + effectiveUnits);
         }
 
-        // Limit radius to reasonable maximum (e.g., 100 km)
-        double MAX_RADIUS_METERS = 1_000_000;
-        if (radiusMeters > MAX_RADIUS_METERS) {
-            throw new IllegalArgumentException("Radius too large. Maximum allowed is " + (MAX_RADIUS_METERS / 1000.0) + " km");
+        // Use configurable maximum radius from application.properties
+        double maxRadiusMeters = maxRadiusKm * 1000.0;
+        if (radiusMeters > maxRadiusMeters) {
+            throw new IllegalArgumentException("Radius too large. Maximum allowed is " + maxRadiusKm + " km");
         }
 
-        // compute bounding box
+        // compute bounding box for spatial index optimization
         // 1 degree latitude ~= 111.32 km
         double latDegreeMeters = 111320.0;
         double deltaLat = radiusMeters / latDegreeMeters;
@@ -351,10 +369,44 @@ public class VideoService {
         int validSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "created_at"));
 
+        // Measure performance for [S2] requirement
+        long startTime = System.currentTimeMillis();
+
         Page<Video> videoPage = videoRepository.findNearby(minLat, maxLat, minLon, maxLon, centerLat, centerLon, radiusMeters, pageable);
         videoPage.getContent().forEach(v -> v.setViewCount(videoViewRepository.countVideoViewByVideo_Id(v.getId())));
 
+        // Record performance metric
+        long responseTime = System.currentTimeMillis() - startTime;
+        String locationStr = String.format("%.4f,%.4f", centerLat, centerLon);
+        double radiusKmForMetric = radiusMeters / 1000.0;
+        performanceMetricsService.recordMetric("NEARBY_SEARCH", responseTime,
+                videoPage.getNumberOfElements(), "DISABLED", locationStr, radiusKmForMetric);
+
         return PageResponse.from(videoPage);
+    }
+
+    /**
+     * Get configured default radius in kilometers.
+     * @return default radius from application.properties
+     */
+    public double getDefaultRadiusKm() {
+        return defaultRadiusKm;
+    }
+
+    /**
+     * Get configured maximum radius in kilometers.
+     * @return maximum radius from application.properties
+     */
+    public double getMaxRadiusKm() {
+        return maxRadiusKm;
+    }
+
+    /**
+     * Get configured default distance units.
+     * @return default units from application.properties
+     */
+    public String getDefaultUnits() {
+        return defaultUnits;
     }
 
     /**
