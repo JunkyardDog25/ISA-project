@@ -18,6 +18,8 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.Optional;
 
 @Service
@@ -28,12 +30,14 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
+    private final TokenBlacklistService tokenBlacklistService;
 
-    public AuthenticationService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager, EmailService emailService) {
+    public AuthenticationService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager, EmailService emailService, TokenBlacklistService tokenBlacklistService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.emailService = emailService;
+        this.tokenBlacklistService = tokenBlacklistService;
     }
 
     public User register(RegisterUserDto registerUserDto) {
@@ -126,6 +130,19 @@ public class AuthenticationService {
         }
     }
 
+    /**
+     * Logout user by blacklisting their JWT token.
+     *
+     * @param token     The JWT token to invalidate
+     * @param expiresAt When the token would naturally expire
+     */
+    public void logout(String token, Date expiresAt) {
+        LocalDateTime expiration = expiresAt.toInstant()
+                .atZone(ZoneId.systemDefault())
+                .toLocalDateTime();
+        tokenBlacklistService.blacklistToken(token, expiration);
+        logger.info("User logged out successfully");
+    }
 
     private void sendVerificationEmail(User user) {
         int expiresIn = user.getVerificationCodeExpiresAt().minusMinutes(LocalDateTime.now().getMinute()).getMinute();
