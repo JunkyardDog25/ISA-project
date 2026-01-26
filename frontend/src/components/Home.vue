@@ -47,6 +47,10 @@ const nearbyMaxRadius = ref(100); // will be overwritten by server config
 const nearbyConfigLoaded = ref(false);
 const nearbyLocationStr = ref(null); // remember last used location ("lat,lon" or null for IP-based)
 
+// Location consent state for nearby search
+const showLocationConsentModal = ref(false);
+const locationConsentAsked = ref(false);
+
 // Load nearby search configuration from server
 async function loadNearbyConfig() {
   if (nearbyConfigLoaded.value) return;
@@ -224,43 +228,70 @@ async function performNearbySearch({ locationStr = undefined, page = 0 } = {}) {
   }
 }
 
-// Initialize nearby search automatically based on user's location preference
-async function initNearbySearch() {
+// Initialize nearby search using a specific location or fallback to IP-based
+async function initNearbySearch(locationStr = null) {
   if (!showNearby.value) return;
+  await performNearbySearch({ locationStr, page: 0 });
+}
 
-  // Check if user allowed location sharing during login
-  const userData = user.value;
+// Toggle nearby search - show location consent modal on first activation (only for logged in users)
+async function toggleNearbySearch() {
+  if (!showNearby.value) {
+    // Turning on nearby search
+    // Load config from server on first toggle
+    await loadNearbyConfig();
 
-  if (userData?.locationAllowed && userData?.latitude && userData?.longitude) {
-    // User allowed location - use stored coordinates
-    const locStr = `${userData.latitude},${userData.longitude}`;
-    await performNearbySearch({ locationStr: locStr, page: 0 });
-  } else if (userData?.locationAllowed) {
-    // User allowed but no stored coords - try browser location
-    const loc = await getBrowserLocation(4000);
-    if (loc) {
-      const locStr = `${loc.lat},${loc.lon}`;
-      await performNearbySearch({ locationStr: locStr, page: 0 });
-    } else {
-      // Fallback to server-side (IP approximation or stored location)
-      await performNearbySearch({ locationStr: null, page: 0 });
+    // If user is not logged in, skip location consent and use IP-based location
+    if (!isLoggedIn.value) {
+      showNearby.value = true;
+      nearbyLocationStr.value = null;
+      await initNearbySearch(null);
+      return;
+    }
+
+    // If we haven't asked for location consent yet, show the modal
+    if (!locationConsentAsked.value) {
+      showLocationConsentModal.value = true;
+      return;
+    }
+
+    // If consent was already asked, proceed with search
+    showNearby.value = true;
+    if (nearbyResults.value.length === 0) {
+      await initNearbySearch(nearbyLocationStr.value);
     }
   } else {
-    // User didn't allow location - use server-side IP approximation
-    await performNearbySearch({ locationStr: null, page: 0 });
+    // Turning off nearby search
+    showNearby.value = false;
   }
 }
 
-// Toggle nearby search and auto-fetch
-async function toggleNearbySearch() {
-  showNearby.value = !showNearby.value;
-  if (showNearby.value) {
-    // Load config from server on first toggle
-    await loadNearbyConfig();
-    if (nearbyResults.value.length === 0) {
-      initNearbySearch();
-    }
+// Called when user agrees to share location from the modal
+async function handleAllowLocation() {
+  locationConsentAsked.value = true;
+  showLocationConsentModal.value = false;
+  showNearby.value = true;
+
+  // Try to get browser location (with short timeout)
+  const loc = await getBrowserLocation(4000);
+  if (loc) {
+    const locStr = `${loc.lat},${loc.lon}`;
+    nearbyLocationStr.value = locStr;
+    await initNearbySearch(locStr);
+  } else {
+    // If user denied at browser level or it failed, proceed with IP-based
+    nearbyLocationStr.value = null;
+    await initNearbySearch(null);
   }
+}
+
+// Called when user explicitly skips location sharing
+async function handleSkipLocation() {
+  locationConsentAsked.value = true;
+  showLocationConsentModal.value = false;
+  showNearby.value = true;
+  nearbyLocationStr.value = null;
+  await initNearbySearch(null);
 }
 
 // Re-search when radius or units change
@@ -790,6 +821,18 @@ const pageNumbers = computed(() => {
         Showing {{ (currentPage - 1) * videosPerPage + 1 }}–{{ Math.min(currentPage * videosPerPage, totalElements) }} of {{ totalElements }} videos
       </p>
     </main>
+
+    <!-- Location consent modal for nearby search -->
+    <div v-if="showLocationConsentModal" class="location-modal-overlay">
+      <div class="location-modal">
+        <h3>Share your location?</h3>
+        <p>To find videos near you, we need access to your location. You can also skip to use an approximate location based on your IP address.</p>
+        <div class="modal-actions">
+          <button @click="handleSkipLocation" class="btn-secondary">Skip (use IP)</button>
+          <button @click="handleAllowLocation" class="btn-primary">Allow</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1316,6 +1359,78 @@ const pageNumbers = computed(() => {
 /* Nearby Videos Section */
 .nearby-videos-section {
   margin-top: 2.5rem;
+}
+
+/* Location consent modal */
+.location-modal-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.location-modal {
+  background: #fff;
+  padding: 1.5rem;
+  border-radius: 10px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  text-align: center;
+}
+
+.location-modal h3 {
+  margin: 0 0 8px 0;
+  font-size: 1.25rem;
+  color: #111;
+}
+
+.location-modal p {
+  color: #555;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: #ff0000;
+  color: #fff;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #e60000;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #333;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #f5f5f5;
 }
 
 /* Responsive */

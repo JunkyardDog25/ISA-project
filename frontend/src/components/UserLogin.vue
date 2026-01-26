@@ -35,9 +35,7 @@ const apiError = ref('');
 const rateLimitRemaining = ref(0);
 let rateLimitInterval = null;
 
-// Location consent state
-const locationConsentAsked = ref(false); // whether we've already shown the consent UI
-const showLocationConsentModal = ref(false);
+
 
 // ----- Validation -----
 
@@ -99,38 +97,8 @@ function markAllTouched() {
   touched.value.password = true;
 }
 
-// Promise wrapper for browser geolocation with timeout
-function getBrowserLocation(timeoutMs = 5000) {
-  return new Promise((resolve) => {
-    if (!navigator.geolocation) return resolve(null);
-    let resolved = false;
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve(null);
-      }
-    }, timeoutMs);
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-        resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-      },
-      () => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-        resolve(null);
-      },
-      { enableHighAccuracy: false, timeout: timeoutMs }
-    );
-  });
-}
-
-// The core login logic (performs the API call). Accepts an optional location string "lat,lon".
-async function performLogin(locationStr = null) {
+// The core login logic (performs the API call).
+async function performLogin() {
   if (rateLimitRemaining.value > 0) return;
   loading.value = true;
 
@@ -140,8 +108,6 @@ async function performLogin(locationStr = null) {
       password: form.value.password
     };
 
-    if (locationStr) payload.location = locationStr;
-
     const res = await loginUser(payload);
     const data = res.data || {};
 
@@ -150,25 +116,16 @@ async function performLogin(locationStr = null) {
       setToken(data.token, form.value.remember);
     }
 
-    // Store user data including location preference
+    // Store user data
     if (data.id || data.username || data.email) {
-      // Save user data with location preference
-      // If locationStr was provided, user allowed location; otherwise they skipped
       const userData = {
         id: data.id,
         username: data.username,
         email: data.email,
-        locationAllowed: !!locationStr,
         latitude: data.latitude || null,
         longitude: data.longitude || null
       };
 
-      // If we obtained browser location, store it
-      if (locationStr) {
-        const [lat, lon] = locationStr.split(',');
-        userData.latitude = parseFloat(lat);
-        userData.longitude = parseFloat(lon);
-      }
 
       setUser(userData, form.value.remember);
     }
@@ -193,7 +150,6 @@ async function performLogin(locationStr = null) {
 }
 
 // Entry point for the form submit.
-// If we haven't asked for location consent yet, show modal; otherwise proceed.
 async function onSubmit() {
   markAllTouched();
   apiError.value = '';
@@ -201,36 +157,6 @@ async function onSubmit() {
   if (!isFormValid.value) return;
   if (rateLimitRemaining.value > 0) return;
 
-  // If we haven't asked for location consent on this session, show the modal first.
-  if (!locationConsentAsked.value) {
-    showLocationConsentModal.value = true;
-    return;
-  }
-
-  // If consent was already asked and user chose to allow earlier, we would have included location when performing login.
-  // Fallback: perform login without location.
-  await performLogin();
-}
-
-// Called when user agrees to share location from the modal
-async function handleAllowLocation() {
-  locationConsentAsked.value = true;
-  showLocationConsentModal.value = false;
-
-  // Try to get browser location (with short timeout), then perform login with result (or without if null)
-  const loc = await getBrowserLocation(4000);
-  if (loc) {
-    await performLogin(`${loc.lat},${loc.lon}`);
-  } else {
-    // If user denied at browser level or it failed, just proceed without location and backend will approximate via IP
-    await performLogin();
-  }
-}
-
-// Called when user explicitly skips location sharing
-async function handleSkipLocation() {
-  locationConsentAsked.value = true;
-  showLocationConsentModal.value = false;
   await performLogin();
 }
 
@@ -335,18 +261,6 @@ function handleLoginError(e) {
 
     <!-- Toast Container -->
     <ToastContainer />
-
-    <!-- Location consent modal -->
-    <div v-if="showLocationConsentModal" class="location-modal-overlay">
-      <div class="location-modal">
-        <h3>Share your location?</h3>
-        <p>We'd like to use your location to improve results and approximate content. Allow sharing your location?</p>
-        <div class="modal-actions">
-          <button @click="handleSkipLocation" class="btn-secondary">Skip</button>
-          <button @click="handleAllowLocation" class="btn-primary">Allow</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -524,35 +438,4 @@ input::placeholder {
 .footer-link:hover {
   text-decoration: underline;
 }
-
-/* Modal styles */
-.location-modal-overlay {
-  position: fixed;
-  left: 0;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1200;
-}
-
-.location-modal {
-  background: #fff;
-  padding: 1.5rem;
-  border-radius: 10px;
-  max-width: 420px;
-  width: 90%;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-  text-align: center;
-}
-
-.location-modal h3 { margin: 0 0 8px 0; }
-.location-modal p { color: #555; margin-bottom: 16px; }
-
-.modal-actions { display:flex; gap:12px; justify-content:center; }
-.btn-primary { background:#ff0000; color:#fff; padding:0.6rem 1.1rem; border-radius:8px; border:none; }
-.btn-secondary { background:transparent; color:#333; padding:0.6rem 1.1rem; border-radius:8px; border:1px solid #ddd; }
 </style>

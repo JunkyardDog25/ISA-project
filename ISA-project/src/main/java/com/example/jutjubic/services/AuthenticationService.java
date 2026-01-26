@@ -17,10 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -91,37 +87,6 @@ public class AuthenticationService {
             throw new RuntimeException("Invalid email or password");
         }
 
-        // Try to obtain location: prefer client-provided location string (lat,lon), otherwise approximate by IP
-        try {
-            String locStr = loginUserDto.getLocation();
-            boolean saved = false;
-            if (locStr != null && locStr.contains(",")) {
-                String[] parts = locStr.split(",");
-                double lat = Double.parseDouble(parts[0].trim());
-                double lon = Double.parseDouble(parts[1].trim());
-                user.setLatitude(lat);
-                user.setLongitude(lon);
-                userRepository.save(user);
-                saved = true;
-                logger.debug("Saved user-provided location for {}: {},{}", user.getEmail(), lat, lon);
-            }
-
-            if (!saved) {
-                String ip = extractClientIp(request);
-                if (ip != null && !ip.isBlank()) {
-                    GeoResult approx = geoLocateIp(ip);
-                    if (approx != null) {
-                        user.setLatitude(approx.lat);
-                        user.setLongitude(approx.lon);
-                        userRepository.save(user);
-                        logger.debug("Saved IP-approximated location for {}: {},{} (ip={})", user.getEmail(), approx.lat, approx.lon, ip);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // Don't fail login if geolocation fails
-            logger.warn("Failed to parse/resolve location for user {}: {}", loginUserDto.getEmail(), e.getMessage());
-        }
 
         return user;
     }
@@ -161,69 +126,6 @@ public class AuthenticationService {
         }
     }
 
-    // Extract client IP from request headers (X-Forwarded-For preferred)
-    private String extractClientIp(HttpServletRequest request) {
-        if (request == null) return null;
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader != null && !xfHeader.isBlank()) {
-            return xfHeader.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
-
-    private static class GeoResult { double lat; double lon; }
-
-    private GeoResult geoLocateIp(String ip) {
-        try {
-            URL url = new URL("http://ip-api.com/json/" + ip + "?fields=status,message,lat,lon");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(2000);
-            conn.setReadTimeout(2000);
-            int code = conn.getResponseCode();
-            if (code != 200) return null;
-
-            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = in.readLine()) != null) sb.append(line);
-            in.close();
-            String body = sb.toString();
-
-            if (body.contains("\"status\":\"success\"")) {
-                String latStr = extractJsonValue(body, "lat");
-                String lonStr = extractJsonValue(body, "lon");
-                if (latStr != null && lonStr != null) {
-                    GeoResult r = new GeoResult();
-                    r.lat = Double.parseDouble(latStr);
-                    r.lon = Double.parseDouble(lonStr);
-                    return r;
-                }
-            }
-        } catch (Exception e) {
-            logger.warn("IP geolocation failed for {}: {}", ip, e.getMessage());
-        }
-        return null;
-    }
-
-    private String extractJsonValue(String json, String key) {
-        String look = "\"" + key + "\":";
-        int idx = json.indexOf(look);
-        if (idx < 0) return null;
-        int start = idx + look.length();
-        while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '"')) start++;
-        int end = start;
-        boolean isString = json.charAt(start) == '"';
-        if (isString) {
-            start++;
-            end = json.indexOf('"', start);
-            if (end < 0) return null;
-            return json.substring(start, end);
-        } else {
-            while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '.' || json.charAt(end) == '-')) end++;
-            return json.substring(start, end);
-        }
-    }
 
     private void sendVerificationEmail(User user) {
         int expiresIn = user.getVerificationCodeExpiresAt().minusMinutes(LocalDateTime.now().getMinute()).getMinute();
