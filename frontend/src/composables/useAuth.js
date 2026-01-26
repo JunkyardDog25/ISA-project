@@ -1,4 +1,5 @@
 import { ref, computed } from 'vue';
+import { logoutUser } from '@/services/UserService';
 
 // ----- Storage Keys -----
 
@@ -81,8 +82,19 @@ export function useAuth() {
 
   /**
    * Clear all auth state and remove from storage.
+   * Also invalidates the token on the server.
    */
-  function logout() {
+  async function logout() {
+    // Call backend to invalidate token
+    if (token.value) {
+      try {
+        await logoutUser(token.value);
+      } catch (error) {
+        // Continue with local logout even if server call fails
+        console.warn('Server logout failed:', error);
+      }
+    }
+
     token.value = null;
     user.value = null;
 
