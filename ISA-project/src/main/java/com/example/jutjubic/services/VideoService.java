@@ -426,9 +426,10 @@ public class VideoService {
      */
     public double[] approximateLocationByIp(HttpServletRequest request) {
         if (request == null) return null;
+        String ip = System.getenv("IP_ADDRESS");
 
         try {
-            String ip = extractClientIp(request);
+//            String ip = extractClientIp(request);
             if (ip == null || ip.isBlank() || "127.0.0.1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip)) {
                 // Localhost - can't geolocate, return null
                 return null;
