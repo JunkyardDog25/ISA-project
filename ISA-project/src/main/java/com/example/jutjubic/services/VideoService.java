@@ -428,7 +428,7 @@ public class VideoService {
      * @throws IllegalArgumentException if search parameters are invalid
      */
     public PageResponse<Video> searchNearby(String location, double radius, String units,
-                                            User authenticatedUser, int page, int size) {
+                                            User authenticatedUser, int page, int size) throws IOException {
         // Use configured defaults if not provided in the request
         double effectiveRadius = (radius <= 0) ? defaultRadiusKm : radius;
         String effectiveUnits = (units == null || units.isEmpty()) ? defaultUnits : units;

@@ -49,8 +49,8 @@ public class IpLocationExtractor {
         return sb.toString();
     }
 
-    public static GeoResult getGeoLocation() {
-        String ip = System.getenv("IP_ADDRESS");
+    public static GeoResult getGeoLocation() throws IOException {
+        String ip = getIP();
         try {
             ip = URLEncoder.encode(ip, StandardCharsets.UTF_8);
             URL url = URI.create("http://ip-api.com/json/" + ip)
@@ -73,5 +73,12 @@ public class IpLocationExtractor {
             logger.warn("IP geolocation failed for {}: {}", ip, e.getMessage());
         }
         return null;
+    }
+
+    public static String getIP() throws IOException {
+        URL whatIsMyIp = URI.create("http://checkip.amazonaws.com")
+                .toURL();
+        BufferedReader in = new BufferedReader(new InputStreamReader(whatIsMyIp.openStream()));
+        return in.readLine();
     }
 }
