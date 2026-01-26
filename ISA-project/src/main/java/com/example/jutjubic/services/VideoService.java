@@ -9,7 +9,9 @@ import com.example.jutjubic.models.Video;
 import com.example.jutjubic.models.VideoView;
 import com.example.jutjubic.repositories.VideoRepository;
 import com.example.jutjubic.repositories.VideoViewRepository;
+import com.example.jutjubic.utils.IpLocationExtractor;
 import com.example.jutjubic.utils.PageResponse;
+import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,12 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.servlet.http.HttpServletRequest;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,13 +41,34 @@ public class VideoService {
     private static final String VIDEOS_DIR = "videos";
     private static final String THUMBNAILS_DIR = "thumbnails";
 
+    /**
+     * -- GETTER --
+     *  Get configured default radius in kilometers.
+     *
+     * @return default radius from application.properties
+     */
     // Configurable nearby search parameters
+    @Getter
     @Value("${nearby.default-radius-km:5.0}")
     private double defaultRadiusKm;
 
+    /**
+     * -- GETTER --
+     *  Get configured maximum radius in kilometers.
+     *
+     * @return maximum radius from application.properties
+     */
+    @Getter
     @Value("${nearby.max-radius-km:100.0}")
     private double maxRadiusKm;
 
+    /**
+     * -- GETTER --
+     *  Get configured default distance units.
+     *
+     * @return default units from application.properties
+     */
+    @Getter
     @Value("${nearby.default-units:km}")
     private String defaultUnits;
 
@@ -386,31 +404,7 @@ public class VideoService {
     }
 
     /**
-     * Get configured default radius in kilometers.
-     * @return default radius from application.properties
-     */
-    public double getDefaultRadiusKm() {
-        return defaultRadiusKm;
-    }
-
-    /**
-     * Get configured maximum radius in kilometers.
-     * @return maximum radius from application.properties
-     */
-    public double getMaxRadiusKm() {
-        return maxRadiusKm;
-    }
-
-    /**
-     * Get configured default distance units.
-     * @return default units from application.properties
-     */
-    public String getDefaultUnits() {
-        return defaultUnits;
-    }
-
-    /**
-     * Get user with location data from database.
+     * Get user with location data from a database.
      * @param userId User ID
      * @return User entity with location data or null if not found
      */
@@ -420,73 +414,66 @@ public class VideoService {
     }
 
     /**
-     * Approximate user location based on IP address using ip-api.com free service.
-     * @param request HTTP request to extract client IP from
-     * @return double array [latitude, longitude] or null if approximation fails
+     * Search for videos near a specified location with automatic location resolution.
+     * Handles location parsing, user location fallback, and IP-based geolocation.
+     *
+     * @param location Optional location as a "lat, lon" string
+     * @param radius Search radius. If <= 0, uses configured default
+     * @param units Distance units (km, m, mi). If null/empty, uses configured default
+     * @param authenticatedUser The authenticated user (can be null for anonymous)
+     * @param page Page number (0-based)
+     * @param size Page size
+     * @return Paginated list of videos within the search radius
+     * @throws NumberFormatException if location string format is invalid
+     * @throws IllegalArgumentException if search parameters are invalid
      */
-    public double[] approximateLocationByIp(HttpServletRequest request) {
-        if (request == null) return null;
-        String ip = System.getenv("IP_ADDRESS");
+    public PageResponse<Video> searchNearby(String location, double radius, String units,
+                                            User authenticatedUser, int page, int size) {
+        // Use configured defaults if not provided in the request
+        double effectiveRadius = (radius <= 0) ? defaultRadiusKm : radius;
+        String effectiveUnits = (units == null || units.isEmpty()) ? defaultUnits : units;
 
-        try {
-//            String ip = extractClientIp(request);
-            if (ip == null || ip.isBlank() || "127.0.0.1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip)) {
-                // Localhost - can't geolocate, return null
-                return null;
-            }
+        double lat;
+        double lon;
 
-            URL url = new URL("http://ip-api.com/json/" + ip + "?fields=status,message,lat,lon");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(2000);
-            conn.setReadTimeout(2000);
-            int code = conn.getResponseCode();
-            if (code != 200) return null;
+        // If location provided, use it
+        if (location != null && location.contains(",")) {
+            String[] parts = location.split(",");
+            lat = Double.parseDouble(parts[0].trim());
+            lon = Double.parseDouble(parts[1].trim());
+        } else {
+            // Try to get location from authenticated user
+            Double userLat = null;
+            Double userLon = null;
 
-            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = in.readLine()) != null) sb.append(line);
-            in.close();
-            String body = sb.toString();
-
-            if (body.contains("\"status\":\"success\"")) {
-                String latStr = extractJsonValue(body, "lat");
-                String lonStr = extractJsonValue(body, "lon");
-                if (latStr != null && lonStr != null) {
-                    return new double[] { Double.parseDouble(latStr), Double.parseDouble(lonStr) };
+            if (authenticatedUser != null) {
+                // Fetch fresh user data from database to get stored location
+                User dbUser = getUserWithLocation(authenticatedUser.getId());
+                if (dbUser != null && dbUser.getLatitude() != null && dbUser.getLongitude() != null) {
+                    userLat = dbUser.getLatitude();
+                    userLon = dbUser.getLongitude();
                 }
             }
-        } catch (Exception e) {
-            logger.warn("IP geolocation approximation failed: {}", e.getMessage());
-        }
-        return null;
-    }
 
-    private String extractClientIp(HttpServletRequest request) {
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader != null && !xfHeader.isBlank()) {
-            return xfHeader.split(",")[0].trim();
+            if (userLat != null && userLon != null) {
+                lat = userLat;
+                lon = userLon;
+            } else {
+                // Try IP-based approximation
+                var coords = IpLocationExtractor.getGeoLocation();
+                if (coords != null) {
+                    lat = coords.lat;
+                    lon = coords.lon;
+                } else {
+                    // Default fallback location (e.g., center of Europe/Serbia)
+                    // This ensures the feature works on localhost for development
+                    lat = 44.8176;  // Belgrade, Serbia
+                    lon = 20.4633;
+                    logger.info("Using default location for nearby search (localhost or IP geolocation failed)");
+                }
+            }
         }
-        return request.getRemoteAddr();
-    }
 
-    private String extractJsonValue(String json, String key) {
-        String look = "\"" + key + "\":";
-        int idx = json.indexOf(look);
-        if (idx < 0) return null;
-        int start = idx + look.length();
-        while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '"')) start++;
-        int end = start;
-        boolean isString = json.charAt(start) == '"';
-        if (isString) {
-            start++;
-            end = json.indexOf('"', start);
-            if (end < 0) return null;
-            return json.substring(start, end);
-        } else {
-            while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '.' || json.charAt(end) == '-')) end++;
-            return json.substring(start, end);
-        }
+        return findVideosNearby(lat, lon, effectiveRadius, effectiveUnits, page, size);
     }
 }
