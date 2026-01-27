@@ -87,7 +87,7 @@ onMounted(() => {
   <div class="performance-dashboard">
     <header class="dashboard-header">
       <h1>Performance Metrics Dashboard</h1>
-      <p class="subtitle">Real-time vs Performance Analysis [S2]</p>
+      <p class="subtitle">Real-time vs Performance Analysis</p>
     </header>
 
     <!-- Controls -->
