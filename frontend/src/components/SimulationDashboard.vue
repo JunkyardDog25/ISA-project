@@ -146,7 +146,7 @@ function getPerformanceClass(avgMs) {
     <!-- Header -->
     <header class="dashboard-header">
       <h1>Simulation & Analysis Dashboard</h1>
-      <p class="subtitle">[S3] Testing - Multiple Regions & Trending Analysis</p>
+      <p class="subtitle">Multiple Regions & Trending Analysis</p>
     </header>
 
     <!-- Parameters -->
