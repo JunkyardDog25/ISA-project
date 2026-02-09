@@ -1,5 +1,29 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
+import { Line } from 'vue-chartjs';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 // State
 const loading = ref(true);
@@ -7,6 +31,8 @@ const error = ref(null);
 const comparisonReport = ref({});
 const selectedOperation = ref('NEARBY_SEARCH');
 const timeWindow = ref(60); // minutes
+const rawMetrics = ref([]);
+const chartKey = ref(0); // Key for forcing chart re-render
 
 // Available operation types
 const operationTypes = ['NEARBY_SEARCH', 'TRENDING_FETCH', 'TRENDING_COMPUTE'];
@@ -20,6 +46,9 @@ async function fetchReport() {
     const response = await fetch(`http://localhost:8080/api/performance/comparison?lastMinutes=${timeWindow.value}`);
     if (!response.ok) throw new Error('Failed to fetch performance data');
     comparisonReport.value = await response.json();
+
+    // Also fetch raw metrics for the chart
+    await fetchRawMetrics();
   } catch (e) {
     error.value = e.message;
     console.error('Error fetching performance report:', e);
@@ -27,6 +56,126 @@ async function fetchReport() {
     loading.value = false;
   }
 }
+
+// Fetch raw metrics for chart visualization
+async function fetchRawMetrics() {
+  try {
+    const response = await fetch(`http://localhost:8080/api/performance/metrics/${selectedOperation.value}?lastMinutes=${timeWindow.value}`);
+    if (!response.ok) throw new Error('Failed to fetch raw metrics');
+    rawMetrics.value = await response.json();
+    chartKey.value++; // Force chart re-render
+  } catch (e) {
+    console.error('Error fetching raw metrics:', e);
+    rawMetrics.value = [];
+  }
+}
+
+// Watch for operation change and refetch metrics
+watch(selectedOperation, async () => {
+  await fetchRawMetrics();
+});
+
+// Chart data computed property
+const chartData = computed(() => {
+  if (!rawMetrics.value || rawMetrics.value.length === 0) {
+    return {
+      labels: [],
+      datasets: []
+    };
+  }
+
+  // Sort by timestamp and take last 50 for readability
+  const sortedMetrics = [...rawMetrics.value]
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    .slice(-50);
+
+  const labels = sortedMetrics.map(m => {
+    const date = new Date(m.timestamp);
+    return date.toLocaleTimeString('sr-RS', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  });
+
+  const responseTimes = sortedMetrics.map(m => m.responseTimeMs);
+
+  // Calculate moving average (window of 5)
+  const movingAvg = responseTimes.map((_, idx, arr) => {
+    const start = Math.max(0, idx - 4);
+    const window = arr.slice(start, idx + 1);
+    return window.reduce((a, b) => a + b, 0) / window.length;
+  });
+
+  return {
+    labels,
+    datasets: [
+      {
+        label: 'Response Time (ms)',
+        data: responseTimes,
+        borderColor: '#007bff',
+        backgroundColor: 'rgba(0, 123, 255, 0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointHoverRadius: 6
+      },
+      {
+        label: 'Moving Average (5)',
+        data: movingAvg,
+        borderColor: '#28a745',
+        backgroundColor: 'transparent',
+        borderDash: [5, 5],
+        fill: false,
+        tension: 0.4,
+        pointRadius: 0
+      }
+    ]
+  };
+});
+
+// Chart options
+const chartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      position: 'top',
+    },
+    title: {
+      display: true,
+      text: `Response Time - ${selectedOperation.value.replace('_', ' ')}`,
+      font: { size: 16 }
+    },
+    tooltip: {
+      mode: 'index',
+      intersect: false,
+      callbacks: {
+        label: function(context) {
+          return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} ms`;
+        }
+      }
+    }
+  },
+  scales: {
+    x: {
+      display: true,
+      title: {
+        display: true,
+        text: 'Time'
+      }
+    },
+    y: {
+      display: true,
+      title: {
+        display: true,
+        text: 'Response Time (ms)'
+      },
+      beginAtZero: true
+    }
+  },
+  interaction: {
+    mode: 'nearest',
+    axis: 'x',
+    intersect: false
+  }
+}));
 
 // Get report for selected operation
 const selectedReport = computed(() => {
@@ -148,6 +297,30 @@ onMounted(() => {
           </div>
           <div class="metric-count">{{ report.totalMeasurements }} samples</div>
         </div>
+      </div>
+
+      <!-- Response Time Chart -->
+      <div class="chart-container" v-if="chartData.labels && chartData.labels.length > 0">
+        <h2>Response Time Graph - {{ selectedOperation.replace('_', ' ') }}</h2>
+        <p class="chart-subtitle">Visual comparison of response times over time for optimal performance analysis</p>
+        <div class="chart-wrapper">
+          <Line :key="chartKey" :data="chartData" :options="chartOptions" />
+        </div>
+        <div class="chart-legend-info">
+          <div class="legend-item">
+            <span class="legend-color blue"></span>
+            <span>Individual Response Times - actual latency per request</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color green"></span>
+            <span>Moving Average - smoothed trend line (window of 5)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- No Chart Data -->
+      <div v-else class="no-chart-data">
+        <p>📊 No chart data available. Generate some traffic to see the response time graph.</p>
       </div>
 
       <!-- Detailed Report -->
@@ -371,6 +544,71 @@ onMounted(() => {
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 1.5rem;
   margin-bottom: 2rem;
+}
+
+/* Chart Container */
+.chart-container {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.chart-container h2 {
+  margin: 0 0 0.5rem;
+  color: #333;
+}
+
+.chart-subtitle {
+  color: #666;
+  font-size: 0.9rem;
+  margin: 0 0 1.5rem;
+}
+
+.chart-wrapper {
+  height: 400px;
+  position: relative;
+}
+
+.chart-legend-info {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.legend-color {
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.legend-color.blue {
+  background: #007bff;
+}
+
+.legend-color.green {
+  background: #28a745;
+}
+
+.no-chart-data {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  text-align: center;
+  color: #666;
 }
 
 .summary-card {
