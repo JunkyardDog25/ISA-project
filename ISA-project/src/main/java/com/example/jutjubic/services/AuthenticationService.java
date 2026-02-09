@@ -6,6 +6,7 @@ import com.example.jutjubic.dto.VerifyUserDto;
 import com.example.jutjubic.models.User;
 import com.example.jutjubic.repositories.UserRepository;
 import jakarta.mail.MessagingException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -13,8 +14,12 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.Optional;
 
 @Service
@@ -25,12 +30,14 @@ public class AuthenticationService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
+    private final TokenBlacklistService tokenBlacklistService;
 
-    public AuthenticationService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager, EmailService emailService) {
+    public AuthenticationService(UserRepository userRepository, PasswordEncoder passwordEncoder, AuthenticationManager authenticationManager, EmailService emailService, TokenBlacklistService tokenBlacklistService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.emailService = emailService;
+        this.tokenBlacklistService = tokenBlacklistService;
     }
 
     public User register(RegisterUserDto registerUserDto) {
@@ -50,8 +57,15 @@ public class AuthenticationService {
     }
 
     public User authenticate(LoginUserDto loginUserDto) {
+        // obtain current request from RequestContextHolder if available and delegate
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        HttpServletRequest req = attrs != null ? attrs.getRequest() : null;
+        return authenticate(loginUserDto, req);
+    }
+
+    public User authenticate(LoginUserDto loginUserDto, HttpServletRequest request) {
         logger.debug("Attempting to authenticate user with email: {}", loginUserDto.getEmail());
-        
+
         User user = userRepository.findByEmail(loginUserDto.getEmail())
                 .orElseThrow(() -> {
                     logger.warn("User not found with email: {}", loginUserDto.getEmail());
@@ -76,6 +90,7 @@ public class AuthenticationService {
             logger.warn("Bad credentials for email: {}", loginUserDto.getEmail());
             throw new RuntimeException("Invalid email or password");
         }
+
 
         return user;
     }
@@ -113,6 +128,20 @@ public class AuthenticationService {
         } else {
             throw new RuntimeException("User not found");
         }
+    }
+
+    /**
+     * Logout user by blacklisting their JWT token.
+     *
+     * @param token     The JWT token to invalidate
+     * @param expiresAt When the token would naturally expire
+     */
+    public void logout(String token, Date expiresAt) {
+        LocalDateTime expiration = expiresAt.toInstant()
+                .atZone(ZoneId.systemDefault())
+                .toLocalDateTime();
+        tokenBlacklistService.blacklistToken(token, expiration);
+        logger.info("User logged out successfully");
     }
 
     private void sendVerificationEmail(User user) {

@@ -7,12 +7,15 @@ import com.example.jutjubic.models.User;
 import com.example.jutjubic.services.AuthenticationService;
 import com.example.jutjubic.services.JwtService;
 import com.example.jutjubic.utils.LoginResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestMapping;
+
+import java.util.Date;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -71,6 +74,24 @@ public class AuthenticationController {
             return ResponseEntity.ok("Verification code resent successfully");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest request) {
+        try {
+            String authHeader = request.getHeader("Authorization");
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                return ResponseEntity.badRequest().body("No token provided");
+            }
+
+            String token = authHeader.substring(7);
+            Date expiresAt = jwtService.extractExpiration(token);
+            authenticationService.logout(token, expiresAt);
+
+            return ResponseEntity.ok("Logged out successfully");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Logout failed: " + e.getMessage());
         }
     }
 }

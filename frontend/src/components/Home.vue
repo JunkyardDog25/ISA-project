@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
-import { getVideosPaginated } from '@/services/VideoService.js';
+import { getVideosPaginated, getDailyPopularVideos, getVideosNearby, getNearbyConfig } from '@/services/VideoService.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -30,6 +30,58 @@ const currentPage = computed(() => {
 // ----- Video Data -----
 
 const videos = ref([]);
+const trendingVideos = ref([]);
+const otherVideos = ref([]);
+
+// ----- Nearby Search State -----
+const showNearby = ref(false);
+const nearbyLoading = ref(false);
+const nearbyError = ref(null);
+const nearbyResults = ref([]);
+const nearbyPage = ref(0);
+const nearbyTotalPages = ref(0);
+const nearbyTotalElements = ref(0);
+const nearbyRadius = ref(5); // will be overwritten by server config
+const nearbyUnits = ref('km'); // will be overwritten by server config
+const nearbyMaxRadius = ref(100); // will be overwritten by server config
+const nearbyConfigLoaded = ref(false);
+const nearbyLocationStr = ref(null); // remember last used location ("lat,lon" or null for IP-based)
+
+// Location consent state for nearby search
+const showLocationConsentModal = ref(false);
+const locationConsentAsked = ref(false);
+
+// Load nearby search configuration from server
+async function loadNearbyConfig() {
+  if (nearbyConfigLoaded.value) return;
+  try {
+    const resp = await getNearbyConfig();
+    if (resp.data) {
+      nearbyRadius.value = resp.data.defaultRadius || 5;
+      nearbyUnits.value = resp.data.defaultUnits || 'km';
+      nearbyMaxRadius.value = resp.data.maxRadius || 100;
+      nearbyConfigLoaded.value = true;
+    }
+  } catch (e) {
+    console.warn('Failed to load nearby config, using defaults:', e);
+  }
+}
+
+// Helper to map API video object to local view model (reuse for both lists)
+function mapApiVideo(v) {
+  return {
+    id: v.id,
+    title: v.title,
+    description: v.description,
+    thumbnail: `http://localhost:8080/${v.thumbnailPath}`,
+    channel: v.creator?.username || 'Unknown',
+    creatorId: v.creator?.id || null,
+    views: formatViews(v.viewCount),
+    uploadedAt: formatDate(v.createdAt),
+    duration: v.duration,
+    tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : []
+  };
+}
 
 // ----- Fetch Videos -----
 
@@ -38,6 +90,36 @@ async function fetchVideos() {
   error.value = null;
 
   try {
+    // Fetch daily popular videos first, but only for logged-in users
+    if (isLoggedIn.value) {
+      try {
+        const trendResp = await getDailyPopularVideos();
+        const trendData = trendResp?.data || [];
+
+        trendingVideos.value = trendData.map(dp => {
+          // endpoint returns DailyPopularVideo, which contains a `video` field
+          const v = dp?.video || dp;
+          return {
+            id: v.id,
+            title: v.title,
+            description: v.description,
+            thumbnail: `http://localhost:8080/${v.thumbnailPath}`,
+            channel: v.creator?.username || 'Unknown',
+            creatorId: v.creator?.id || null,
+            views: formatViews(v.viewCount),
+            uploadedAt: formatDate(v.createdAt),
+            duration: v.duration,
+            tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : []
+          };
+        });
+      } catch (e) {
+        console.warn('Failed to fetch daily popular videos:', e);
+        trendingVideos.value = [];
+      }
+    } else {
+      trendingVideos.value = [];
+    }
+
     // API uses 0-based pages, URL uses 1-based
     const response = await getVideosPaginated(currentPage.value - 1, videosPerPage);
     const data = response.data;
@@ -59,8 +141,13 @@ async function fetchVideos() {
       creatorId: video.creator?.id || null,
       views: formatViews(video.viewCount),
       uploadedAt: formatDate(video.createdAt),
-      duration: video.duration
+      duration: video.duration,
+      tags: video.tags ? video.tags.split(',').map(t => t.trim()).filter(t => t) : []
     }));
+
+    // Exclude trending videos from the paginated list for the "Other Videos" section
+    const trendingIds = new Set(trendingVideos.value.map(t => t.id));
+    otherVideos.value = videos.value.filter(v => !trendingIds.has(v.id));
 
     // Update pagination state from response metadata
     totalPages.value = data.totalPages;
@@ -76,11 +163,200 @@ async function fetchVideos() {
   }
 }
 
+// Add browser geolocation helper (promise wrapper)
+function getBrowserLocation(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        resolve(null);
+      }
+    }, timeoutMs);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      },
+      () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timer);
+        resolve(null);
+      },
+      { enableHighAccuracy: false, timeout: timeoutMs }
+    );
+  });
+}
+
+// Perform a nearby search automatically based on user's location preference from login
+async function performNearbySearch({ locationStr = undefined, page = 0 } = {}) {
+  nearbyLoading.value = true;
+  nearbyError.value = null;
+
+  // Use last used locationStr if undefined; explicit null means server will use stored location or IP-based
+  if (locationStr === undefined) locationStr = nearbyLocationStr.value;
+  // remember chosen location for subsequent pages
+  nearbyLocationStr.value = locationStr;
+
+  try {
+    const resp = await getVideosNearby({ location: locationStr, radius: nearbyRadius.value, units: nearbyUnits.value, page, size: videosPerPage });
+    const data = resp.data;
+    if (!data || !data.content) {
+      nearbyResults.value = [];
+      nearbyTotalPages.value = 0;
+      nearbyTotalElements.value = 0;
+      return;
+    }
+
+    nearbyResults.value = data.content.map(mapApiVideo);
+    nearbyTotalPages.value = data.totalPages;
+    nearbyTotalElements.value = data.totalElements;
+    nearbyPage.value = page;
+  } catch (e) {
+    nearbyError.value = e?.response?.data?.message || e?.message || 'Failed to load nearby videos';
+    nearbyResults.value = [];
+    nearbyTotalPages.value = 0;
+    nearbyTotalElements.value = 0;
+    console.error('Error fetching nearby videos:', e);
+  } finally {
+    nearbyLoading.value = false;
+  }
+}
+
+// Initialize nearby search using a specific location or fallback to IP-based
+async function initNearbySearch(locationStr = null) {
+  if (!showNearby.value) return;
+  await performNearbySearch({ locationStr, page: 0 });
+}
+
+// Toggle nearby search - show location consent modal on first activation (only for logged in users)
+async function toggleNearbySearch() {
+  if (!showNearby.value) {
+    // Turning on nearby search
+    // Load config from server on first toggle
+    await loadNearbyConfig();
+
+    // If user is not logged in, skip location consent and use IP-based location
+    if (!isLoggedIn.value) {
+      showNearby.value = true;
+      nearbyLocationStr.value = null;
+      await initNearbySearch(null);
+      return;
+    }
+
+    // If we haven't asked for location consent yet, show the modal
+    if (!locationConsentAsked.value) {
+      showLocationConsentModal.value = true;
+      return;
+    }
+
+    // If consent was already asked, proceed with search
+    showNearby.value = true;
+    if (nearbyResults.value.length === 0) {
+      await initNearbySearch(nearbyLocationStr.value);
+    }
+  } else {
+    // Turning off nearby search
+    showNearby.value = false;
+  }
+}
+
+// Called when user agrees to share location from the modal
+async function handleAllowLocation() {
+  locationConsentAsked.value = true;
+  showLocationConsentModal.value = false;
+  showNearby.value = true;
+
+  // Try to get browser location (with short timeout)
+  const loc = await getBrowserLocation(4000);
+  if (loc) {
+    const locStr = `${loc.lat},${loc.lon}`;
+    nearbyLocationStr.value = locStr;
+    await initNearbySearch(locStr);
+  } else {
+    // If user denied at browser level or it failed, proceed with IP-based
+    nearbyLocationStr.value = null;
+    await initNearbySearch(null);
+  }
+}
+
+// Called when user explicitly skips location sharing
+async function handleSkipLocation() {
+  locationConsentAsked.value = true;
+  showLocationConsentModal.value = false;
+  showNearby.value = true;
+  nearbyLocationStr.value = null;
+  await initNearbySearch(null);
+}
+
+// Re-search when radius or units change
+async function onRadiusChange() {
+  if (showNearby.value) {
+    await performNearbySearch({ page: 0 });
+  }
+}
+
+function clearNearby() {
+  showNearby.value = false;
+  nearbyResults.value = [];
+  nearbyError.value = null;
+}
+
+// Nearby paging
+async function nearbyPrev() {
+  if (nearbyPage.value > 0) {
+    await performNearbySearch({ page: nearbyPage.value - 1 });
+  }
+}
+async function nearbyNext() {
+  if (nearbyPage.value < nearbyTotalPages.value - 1) {
+    await performNearbySearch({ page: nearbyPage.value + 1 });
+  }
+}
+
+// nearby page numbers computed (1-based pages)
+const nearbyPageNumbers = computed(() => {
+  const pages = [];
+  const total = nearbyTotalPages.value;
+  const current = nearbyPage.value + 1; // convert to 1-based
+
+  if (total <= 5) {
+    for (let i = 1; i <= total; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (current > 3) pages.push('...');
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    for (let i = start; i <= end; i++) if (!pages.includes(i)) pages.push(i);
+    if (current < total - 2) pages.push('...');
+    if (!pages.includes(total)) pages.push(total);
+  }
+  return pages;
+});
+
 // ----- Watch for URL changes -----
 
 watch(() => route.query.page, () => {
   fetchVideos();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// Fetch trending when auth state changes (so login without reload works)
+watch(() => isLoggedIn.value, (logged) => {
+  if (logged) {
+    // user just logged in: fetch videos (includes trending)
+    fetchVideos();
+  } else {
+    // user logged out: clear trending list immediately
+    trendingVideos.value = [];
+    // ensure otherVideos shows all videos
+    otherVideos.value = videos.value.slice();
+  }
 });
 
 // ----- Helper Functions -----
@@ -181,67 +457,179 @@ const pageNumbers = computed(() => {
     <!-- Header -->
     <header class="home-header">
       <div class="header-content">
-        <h1>
-          <span v-if="isLoggedIn && user?.username">
-            Welcome back, {{ user.username }}!
-          </span>
-          <span v-else>Discover Videos</span>
-        </h1>
-        <p class="subtitle">Watch the latest and greatest content</p>
+        <div class="header-top">
+          <div class="header-text">
+            <h1>
+              <span v-if="isLoggedIn && user?.username">
+                Welcome back, {{ user.username }}!
+              </span>
+              <span v-else>Discover Videos</span>
+            </h1>
+            <p class="subtitle">Watch the latest and greatest content</p>
+          </div>
+
+          <!-- Nearby Search Controls in Header -->
+          <div class="header-controls">
+            <!-- Admin/Testing Links -->
+            <div class="admin-links">
+              <RouterLink to="/performance" class="admin-link" title="Performance Metrics [S2]">
+                📊 Performance
+              </RouterLink>
+              <RouterLink to="/simulation" class="admin-link" title="Simulation Testing [S3]">
+                🧪 Simulation
+              </RouterLink>
+            </div>
+
+            <div class="nearby-controls">
+              <label class="nearby-toggle">
+                <input
+                  type="checkbox"
+                  :checked="showNearby"
+                  @change="toggleNearbySearch"
+                />
+                <span class="toggle-label">Nearby</span>
+              </label>
+
+              <div v-if="showNearby" class="radius-controls-header">
+                <input
+                  type="number"
+                  min="0.1"
+                  :max="nearbyMaxRadius"
+                  step="0.1"
+                  v-model.number="nearbyRadius"
+                  @change="onRadiusChange"
+                  class="radius-input-sm"
+                  :title="`Search radius (max: ${nearbyMaxRadius} ${nearbyUnits})`"
+                />
+                <select
+                  v-model="nearbyUnits"
+                  @change="onRadiusChange"
+                  class="units-select-sm"
+                  title="Distance units"
+                >
+                  <option value="km">km</option>
+                  <option value="m">m</option>
+                  <option value="mi">mi</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </header>
 
-    <!-- Video Grid -->
+    <!-- Trending Now Section -->
     <main class="video-section">
-      <div class="section-header">
-        <h2>Trending Now</h2>
-        <span class="video-count">{{ totalElements }} videos</span>
+      <!-- Only show trending to logged-in users -->
+      <div v-if="isLoggedIn">
+        <div class="section-header">
+          <h2>Trending Now</h2>
+          <div class="section-actions">
+            <span class="video-count">{{ trendingVideos.length }} videos</span>
+          </div>
+        </div>
+
+        <!-- Trending Carousel / Loading / Empty -->
+        <div v-if="loading && trendingVideos.length === 0" class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading trending videos...</p>
+        </div>
+
+        <div v-else-if="!loading && trendingVideos.length === 0" class="empty-state">
+          <p>No trending videos found</p>
+        </div>
+
+        <div v-else class="trending-carousel" role="region" aria-label="Trending videos carousel">
+          <div class="trending-carousel-inner">
+            <article
+              v-for="video in trendingVideos"
+              :key="`trending-` + video.id"
+              class="trending-card video-card"
+              @click="goToVideo(video.id)"
+              tabindex="0"
+              @keydown.enter="goToVideo(video.id)"
+            >
+              <div class="thumbnail-wrapper">
+                <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
+
+                <div class="play-overlay">
+                  <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+
+                <!-- Tags -->
+                <div v-if="video.tags && video.tags.length > 0" class="video-tags">
+                  <span class="tag" v-for="(tag, idx) in video.tags.slice(0, 2)" :key="idx">{{ tag }}</span>
+                  <span v-if="video.tags.length > 2" class="tag tag-more">+{{ video.tags.length - 2 }}</span>
+                </div>
+              </div>
+
+              <div class="video-info">
+                <h3 class="video-title">{{ video.title }}</h3>
+                <div class="video-meta">
+                  <RouterLink
+                    v-if="video.creatorId"
+                    :to="{ name: 'user-profile', params: { id: video.creatorId } }"
+                    class="channel-name-link"
+                    @click.stop
+                  >
+                    {{ video.channel }}
+                  </RouterLink>
+                  <span v-else class="channel-name">{{ video.channel }}</span>
+                  <span class="meta-separator">•</span>
+                  <span class="view-count">{{ video.views }}</span>
+                  <span class="meta-separator">•</span>
+                  <span class="upload-time">{{ video.uploadedAt }}</span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
       </div>
 
-      <!-- Loading State -->
-      <div v-if="loading" class="loading-state">
-        <div class="spinner"></div>
-        <p>Loading videos...</p>
+      <!-- Other Videos Section -->
+      <div class="section-header" style="margin-top: 2.5rem;">
+        <h2>Other Videos</h2>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="video-count">{{ totalElements - trendingVideos.length }} videos</span>
+        </div>
       </div>
 
-      <!-- Error State -->
-      <div v-else-if="error" class="error-state">
+      <!-- Error State for other videos -->
+      <div v-if="error" class="error-state">
         <p>{{ error }}</p>
         <button @click="fetchVideos" class="retry-btn">Try Again</button>
       </div>
 
-      <!-- Empty State -->
-      <div v-else-if="videos.length === 0" class="empty-state">
-        <p>No videos found</p>
+      <!-- Empty State for other videos -->
+      <div v-else-if="!loading && otherVideos.length === 0" class="empty-state">
+        <p>No other videos found</p>
       </div>
 
-      <!-- Video Grid -->
+      <!-- Other Video Grid -->
       <div v-else class="video-grid">
         <article
-          v-for="video in videos"
+          v-for="video in otherVideos"
           :key="video.id"
           class="video-card"
           @click="goToVideo(video.id)"
         >
-          <!-- Thumbnail -->
           <div class="thumbnail-wrapper">
-            <img
-              :src="video.thumbnail"
-              :alt="video.title"
-              class="thumbnail"
-            />
+            <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
             <div class="play-overlay">
-              <svg
-                class="play-icon"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
+              <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8 5v14l11-7z" />
               </svg>
             </div>
+
+            <!-- Tags -->
+            <div v-if="video.tags && video.tags.length > 0" class="video-tags">
+              <span class="tag" v-for="(tag, idx) in video.tags.slice(0, 2)" :key="idx">{{ tag }}</span>
+              <span v-if="video.tags.length > 2" class="tag tag-more">+{{ video.tags.length - 2 }}</span>
+            </div>
           </div>
 
-          <!-- Video Info -->
           <div class="video-info">
             <h3 class="video-title">{{ video.title }}</h3>
             <div class="video-meta">
@@ -261,6 +649,125 @@ const pageNumbers = computed(() => {
             </div>
           </div>
         </article>
+      </div>
+
+      <!-- Nearby Videos Section -->
+      <div v-if="showNearby" class="nearby-videos-section">
+        <div class="section-header">
+          <h2>Nearby Videos</h2>
+          <div class="section-actions">
+            <span class="video-count">{{ nearbyTotalElements }} videos found</span>
+          </div>
+        </div>
+
+        <!-- Nearby Video Grid / Loading / Empty -->
+        <div v-if="nearbyLoading" class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading nearby videos...</p>
+        </div>
+
+        <div v-else-if="nearbyError" class="error-state">
+          <p>{{ nearbyError }}</p>
+          <button @click="initNearbySearch" class="retry-btn">Try Again</button>
+        </div>
+
+        <div v-else-if="!nearbyLoading && nearbyResults.length === 0" class="empty-state">
+          <p>No nearby videos found</p>
+        </div>
+
+        <div v-else class="video-grid">
+          <article
+            v-for="video in nearbyResults"
+            :key="video.id"
+            class="video-card"
+            @click="goToVideo(video.id)"
+          >
+            <div class="thumbnail-wrapper">
+              <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
+              <div class="play-overlay">
+                <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+
+              <!-- Tags -->
+              <div v-if="video.tags && video.tags.length > 0" class="video-tags">
+                <span class="tag" v-for="(tag, idx) in video.tags.slice(0, 2)" :key="idx">{{ tag }}</span>
+                <span v-if="video.tags.length > 2" class="tag tag-more">+{{ video.tags.length - 2 }}</span>
+              </div>
+            </div>
+
+            <div class="video-info">
+              <h3 class="video-title">{{ video.title }}</h3>
+              <div class="video-meta">
+                <RouterLink
+                  v-if="video.creatorId"
+                  :to="{ name: 'user-profile', params: { id: video.creatorId } }"
+                  class="channel-name-link"
+                  @click.stop
+                >
+                  {{ video.channel }}
+                </RouterLink>
+                <span v-else class="channel-name">{{ video.channel }}</span>
+                <span class="meta-separator">•</span>
+                <span class="view-count">{{ video.views }}</span>
+                <span class="meta-separator">•</span>
+                <span class="upload-time">{{ video.uploadedAt }}</span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Nearby Pagination -->
+        <nav v-if="!nearbyLoading && nearbyTotalPages > 1" class="pagination" aria-label="Nearby video pagination">
+          <!-- Previous Button -->
+          <button
+            class="page-btn prev-btn"
+            :disabled="nearbyPage === 0"
+            @click="nearbyPrev"
+            aria-label="Previous page"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            <span class="btn-text">Previous</span>
+          </button>
+
+          <!-- Page Numbers -->
+          <div class="page-numbers">
+            <template v-for="(page, index) in nearbyPageNumbers" :key="index">
+              <span v-if="page === '...'" class="page-ellipsis">...</span>
+              <button
+                v-else
+                class="page-number"
+                :class="{ active: page === nearbyPage + 1 }"
+                @click="performNearbySearch({ page: page - 1 })"
+                :aria-label="`Page ${page}`"
+                :aria-current="page === nearbyPage + 1 ? 'page' : undefined"
+              >
+                {{ page }}
+              </button>
+            </template>
+          </div>
+
+          <!-- Next Button -->
+          <button
+            class="page-btn next-btn"
+            :disabled="nearbyPage >= nearbyTotalPages - 1"
+            @click="nearbyNext"
+            aria-label="Next page"
+          >
+            <span class="btn-text">Next</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+        </nav>
+
+        <!-- Page Info -->
+        <p v-if="!nearbyLoading && nearbyTotalPages > 1" class="page-info">
+          Showing {{ nearbyPage * videosPerPage + 1 }}–{{ Math.min((nearbyPage + 1) * videosPerPage, nearbyTotalElements) }} of {{ nearbyTotalElements }} videos
+        </p>
       </div>
 
       <!-- Pagination -->
@@ -314,6 +821,18 @@ const pageNumbers = computed(() => {
         Showing {{ (currentPage - 1) * videosPerPage + 1 }}–{{ Math.min(currentPage * videosPerPage, totalElements) }} of {{ totalElements }} videos
       </p>
     </main>
+
+    <!-- Location consent modal for nearby search -->
+    <div v-if="showLocationConsentModal" class="location-modal-overlay">
+      <div class="location-modal">
+        <h3>Share your location?</h3>
+        <p>To find videos near you, we need access to your location. You can also skip to use an approximate location based on your IP address.</p>
+        <div class="modal-actions">
+          <button @click="handleSkipLocation" class="btn-secondary">Skip (use IP)</button>
+          <button @click="handleAllowLocation" class="btn-primary">Allow</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -328,8 +847,24 @@ const pageNumbers = computed(() => {
 .home-header {
   background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
   color: #fff;
-  padding: 3rem 2rem;
-  text-align: center;
+  padding: 2rem;
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.header-text {
+  flex: 1;
 }
 
 .header-content h1 {
@@ -342,6 +877,105 @@ const pageNumbers = computed(() => {
   margin: 0;
   font-size: 1.1rem;
   opacity: 0.9;
+}
+
+/* Header Controls (Nearby Search) */
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nearby-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.nearby-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.nearby-toggle input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #fff;
+  cursor: pointer;
+}
+
+.toggle-label {
+  white-space: nowrap;
+}
+
+/* Admin/Testing Links */
+.admin-links {
+  display: flex;
+  gap: 0.5rem;
+  margin-right: 1rem;
+}
+
+.admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.8rem;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+
+.admin-link:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.radius-controls-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.radius-input-sm {
+  width: 60px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+}
+
+.radius-input-sm:focus {
+  outline: none;
+  border-color: #fff;
+}
+
+.units-select-sm {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  cursor: pointer;
+}
+
+.units-select-sm:focus {
+  outline: none;
+  border-color: #fff;
 }
 
 /* Video Section */
@@ -498,6 +1132,38 @@ const pageNumbers = computed(() => {
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
 }
 
+/* Video Tags */
+.video-tags {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 70%;
+  justify-content: flex-end;
+  z-index: 10;
+}
+
+.tag {
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  white-space: nowrap;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag-more {
+  background: #ff0000;
+  color: #fff;
+}
+
 /* Video Info */
 .video-info {
   padding: 1rem;
@@ -547,6 +1213,61 @@ const pageNumbers = computed(() => {
 
 .meta-separator {
   color: #999;
+}
+
+/* Trending-specific styles */
+.trending-carousel {
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 1rem 0.25rem;
+  display: flex; /* make the scroll area itself a flex container so items can be centered */
+  justify-content: center;
+  scroll-snap-type: x mandatory; /* enable snap so each card centers */
+}
+
+.trending-carousel-inner {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  justify-content: center; /* center cards inside the inner container */
+  padding: 0 1rem;
+}
+
+.trending-card {
+  width: clamp(300px, 42vw, 420px);
+  background: linear-gradient(180deg, #ffffff, #fffaf8);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+}
+
+.trending-card:hover {
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.12);
+}
+
+.trending-card .thumbnail-wrapper {
+  aspect-ratio: 16 / 9;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Make play overlay slightly larger on trending cards */
+.trending-card .play-icon {
+  width: 56px;
+  height: 56px;
+}
+
+/* Ensure smooth horizontal scrolling visual */
+.trending-carousel::-webkit-scrollbar {
+  height: 10px;
+}
+.trending-carousel::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.12);
+  border-radius: 999px;
 }
 
 /* Pagination */
@@ -635,14 +1356,106 @@ const pageNumbers = computed(() => {
   color: #666;
 }
 
+/* Nearby Videos Section */
+.nearby-videos-section {
+  margin-top: 2.5rem;
+}
+
+/* Location consent modal */
+.location-modal-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.location-modal {
+  background: #fff;
+  padding: 1.5rem;
+  border-radius: 10px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  text-align: center;
+}
+
+.location-modal h3 {
+  margin: 0 0 8px 0;
+  font-size: 1.25rem;
+  color: #111;
+}
+
+.location-modal p {
+  color: #555;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: #ff0000;
+  color: #fff;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #e60000;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: #333;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #f5f5f5;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .home-header {
-    padding: 2rem 1rem;
+    padding: 1.5rem 1rem;
   }
 
-  .header-content h1 {
+  .header-top {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .header-text h1 {
     font-size: 1.5rem;
+  }
+
+  .header-controls {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .nearby-controls {
+    width: 100%;
+    justify-content: center;
   }
 
   .video-section {
@@ -670,6 +1483,19 @@ const pageNumbers = computed(() => {
     min-width: 36px;
     height: 36px;
     font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .trending-card {
+    width: calc(100% - 2rem);
+  }
+  .trending-carousel {
+    padding: 0.75rem 0.75rem;
+  }
+  .trending-carousel-inner {
+    padding: 0 0.5rem;
+    gap: 0.75rem;
   }
 }
 </style>

@@ -9,9 +9,12 @@ import com.example.jutjubic.models.Video;
 import com.example.jutjubic.models.VideoView;
 import com.example.jutjubic.repositories.VideoRepository;
 import com.example.jutjubic.repositories.VideoViewRepository;
+import com.example.jutjubic.utils.IpLocationExtractor;
 import com.example.jutjubic.utils.PageResponse;
+import lombok.Getter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -38,15 +41,48 @@ public class VideoService {
     private static final String VIDEOS_DIR = "videos";
     private static final String THUMBNAILS_DIR = "thumbnails";
 
+    /**
+     * -- GETTER --
+     *  Get configured default radius in kilometers.
+     *
+     * @return default radius from application.properties
+     */
+    // Configurable nearby search parameters
+    @Getter
+    @Value("${nearby.default-radius-km:5.0}")
+    private double defaultRadiusKm;
+
+    /**
+     * -- GETTER --
+     *  Get configured maximum radius in kilometers.
+     *
+     * @return maximum radius from application.properties
+     */
+    @Getter
+    @Value("${nearby.max-radius-km:100.0}")
+    private double maxRadiusKm;
+
+    /**
+     * -- GETTER --
+     *  Get configured default distance units.
+     *
+     * @return default units from application.properties
+     */
+    @Getter
+    @Value("${nearby.default-units:km}")
+    private String defaultUnits;
+
     private final VideoRepository videoRepository;
     private final VideoViewRepository videoViewRepository;
-
     private final UserService userService;
+    private final PerformanceMetricsService performanceMetricsService;
 
-    public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository, UserService userService) {
+    public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository,
+                       UserService userService, PerformanceMetricsService performanceMetricsService) {
         this.videoRepository = videoRepository;
         this.videoViewRepository = videoViewRepository;
         this.userService = userService;
+        this.performanceMetricsService = performanceMetricsService;
 
         // Ensure directories exist
         try {
@@ -71,13 +107,56 @@ public class VideoService {
                 videoDto.getDuration() != null ? videoDto.getDuration() : new Time(0),
                 videoDto.getTranscoded() != null ? videoDto.getTranscoded() : false,
                 videoDto.getScheduledAt(),
-                videoDto.getCountry(),
                 null, // tags - not in VideoDto, can be null
                 videoDto.getViewCount() != null ? videoDto.getViewCount() : 0,
                 videoDto.getUser()
         );
 
         return videoRepository.save(video);
+    }
+
+    /**
+     * Creates a new video transactionally with file upload.
+     * The entire operation is wrapped in a transaction that will be rolled back
+     * if any error occurs during video creation.
+     *
+     * @param title Video title
+     * @param description Video description
+     * @param tags Video tags (comma-separated)
+     * @param latitude Video location latitude (optional)
+     * @param longitude Video location longitude (optional)
+     * @param videoFile Video file (MP4, max 200MB)
+     * @param thumbnailFile Thumbnail image file
+     * @param user Authenticated user creating the video
+     * @return Created Video entity
+     * @throws IllegalArgumentException if validation fails
+     * @throws IOException if file saving fails
+     * @throws RuntimeException if user is not found or any other error occurs
+     */
+    @Transactional(rollbackFor = {Exception.class})
+    public Video createVideoWithFiles(String title, String description, String tags,
+                                      Double latitude, Double longitude,
+                                      MultipartFile videoFile, MultipartFile thumbnailFile,
+                                      User user) throws IOException {
+        logger.debug("Starting transactional video creation with files for user: {}", user.getId());
+
+        // Create DTO from form data and files
+        CreateVideoDto createVideoDto = new CreateVideoDto();
+        createVideoDto.setTitle(title);
+        createVideoDto.setDescription(description);
+        createVideoDto.setTags(tags);
+        createVideoDto.setLatitude(latitude);
+        createVideoDto.setLongitude(longitude);
+        createVideoDto.setFileSize(videoFile.getSize());
+
+        // Save files and set paths
+        String videoPath = saveVideoFile(videoFile);
+        String thumbnailPath = saveThumbnailFile(thumbnailFile);
+
+        createVideoDto.setVideoPath(videoPath);
+        createVideoDto.setThumbnailPath(thumbnailPath);
+
+        return createVideo(createVideoDto, user);
     }
 
     /**
@@ -116,14 +195,19 @@ public class VideoService {
                 createVideoDto.getThumbnailPath(),
                 null, // thumbnailCompressedPath - not needed for creation
                 createVideoDto.getFileSize() != null ? createVideoDto.getFileSize() : 0L,
-                new Time(0), // duration - will be set later if needed
+                createVideoDto.getDuration() != null ? createVideoDto.getDuration() : new Time(0), // duration from extracted metadata
                 false, // transcoded - default false
                 null, // scheduledAt - not needed for immediate posting
-                createVideoDto.getCountry(),
                 createVideoDto.getTags(),
                 0L, // viewCount - starts at 0
                 managedUser
         );
+
+        // Set location if provided
+        if (createVideoDto.getLatitude() != null && createVideoDto.getLongitude() != null) {
+            video.setLatitude(createVideoDto.getLatitude());
+            video.setLongitude(createVideoDto.getLongitude());
+        }
 
         // Save video - this will be committed when transaction completes successfully
         Video savedVideo = videoRepository.save(video);
@@ -246,5 +330,150 @@ public class VideoService {
 
         // Return the web-accessible path so it can be saved in DB and served via /media/** mapping
         return "media/" + THUMBNAILS_DIR + "/" + filename;
+    }
+
+    /**
+     * Find videos within a radius from a given center point.
+     * Uses configurable radius limits from application.properties.
+     *
+     * @param centerLat latitude of center
+     * @param centerLon longitude of center
+     * @param radius radius value in units specified by `units` (m, km, mi). If <= 0, uses default from config.
+     * @param units "m" (meters), "km" (kilometers) or "mi" (miles). If null/empty, uses default from config.
+     * @param page page index (0-based)
+     * @param size page size
+     */
+    public PageResponse<Video> findVideosNearby(double centerLat, double centerLon, double radius, String units, int page, int size) {
+        if (centerLat < -90 || centerLat > 90) throw new IllegalArgumentException("Latitude must be between -90 and 90");
+        if (centerLon < -180 || centerLon > 180) throw new IllegalArgumentException("Longitude must be between -180 and 180");
+
+        // Use configured defaults if not provided
+        String effectiveUnits = (units == null || units.isEmpty()) ? defaultUnits : units;
+        double effectiveRadius = (radius <= 0) ? defaultRadiusKm : radius;
+
+        double radiusMeters;
+        if ("km".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius * 1000.0;
+        } else if ("m".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius;
+        } else if ("mi".equalsIgnoreCase(effectiveUnits) || "mile".equalsIgnoreCase(effectiveUnits) || "miles".equalsIgnoreCase(effectiveUnits)) {
+            radiusMeters = effectiveRadius * 1609.344;
+        } else {
+            throw new IllegalArgumentException("Unsupported units: " + effectiveUnits);
+        }
+
+        // Use configurable maximum radius from application.properties
+        double maxRadiusMeters = maxRadiusKm * 1000.0;
+        if (radiusMeters > maxRadiusMeters) {
+            throw new IllegalArgumentException("Radius too large. Maximum allowed is " + maxRadiusKm + " km");
+        }
+
+        // compute bounding box for spatial index optimization
+        // 1 degree latitude ~= 111.32 km
+        double latDegreeMeters = 111320.0;
+        double deltaLat = radiusMeters / latDegreeMeters;
+
+        // longitude degrees depend on latitude
+        double lonDegreeMeters = 111320.0 * Math.cos(Math.toRadians(centerLat));
+        if (lonDegreeMeters <= 0) lonDegreeMeters = 1; // guard
+        double deltaLon = radiusMeters / lonDegreeMeters;
+
+        double minLat = centerLat - deltaLat;
+        double maxLat = centerLat + deltaLat;
+        double minLon = centerLon - deltaLon;
+        double maxLon = centerLon + deltaLon;
+
+        int validPage = Math.max(0, page);
+        int validSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "created_at"));
+
+        // Measure performance for [S2] requirement
+        long startTime = System.currentTimeMillis();
+
+        Page<Video> videoPage = videoRepository.findNearby(minLat, maxLat, minLon, maxLon, centerLat, centerLon, radiusMeters, pageable);
+        videoPage.getContent().forEach(v -> v.setViewCount(videoViewRepository.countVideoViewByVideo_Id(v.getId())));
+
+        // Record performance metric
+        long responseTime = System.currentTimeMillis() - startTime;
+        String locationStr = String.format("%.4f,%.4f", centerLat, centerLon);
+        double radiusKmForMetric = radiusMeters / 1000.0;
+        performanceMetricsService.recordMetric("NEARBY_SEARCH", responseTime,
+                videoPage.getNumberOfElements(), "DISABLED", locationStr, radiusKmForMetric);
+
+        return PageResponse.from(videoPage);
+    }
+
+    /**
+     * Get user with location data from a database.
+     * @param userId User ID
+     * @return User entity with location data or null if not found
+     */
+    public User getUserWithLocation(UUID userId) {
+        if (userId == null) return null;
+        return userService.getUserById(userId);
+    }
+
+    /**
+     * Search for videos near a specified location with automatic location resolution.
+     * Handles location parsing, user location fallback, and IP-based geolocation.
+     *
+     * @param location Optional location as a "lat, lon" string
+     * @param radius Search radius. If <= 0, uses configured default
+     * @param units Distance units (km, m, mi). If null/empty, uses configured default
+     * @param authenticatedUser The authenticated user (can be null for anonymous)
+     * @param page Page number (0-based)
+     * @param size Page size
+     * @return Paginated list of videos within the search radius
+     * @throws NumberFormatException if location string format is invalid
+     * @throws IllegalArgumentException if search parameters are invalid
+     */
+    public PageResponse<Video> searchNearby(String location, double radius, String units,
+                                            User authenticatedUser, int page, int size) throws IOException {
+        // Use configured defaults if not provided in the request
+        double effectiveRadius = (radius <= 0) ? defaultRadiusKm : radius;
+        String effectiveUnits = (units == null || units.isEmpty()) ? defaultUnits : units;
+
+        double lat;
+        double lon;
+
+        // If location provided, use it
+        if (location != null && location.contains(",")) {
+            String[] parts = location.split(",");
+            lat = Double.parseDouble(parts[0].trim());
+            lon = Double.parseDouble(parts[1].trim());
+        } else {
+            // Try to get location from authenticated user
+            Double userLat = null;
+            Double userLon = null;
+
+            if (authenticatedUser != null) {
+                // Fetch fresh user data from database to get stored location
+                User dbUser = getUserWithLocation(authenticatedUser.getId());
+                if (dbUser != null && dbUser.getLatitude() != null && dbUser.getLongitude() != null) {
+                    userLat = dbUser.getLatitude();
+                    userLon = dbUser.getLongitude();
+                }
+            }
+
+            if (userLat != null && userLon != null) {
+                lat = userLat;
+                lon = userLon;
+            } else {
+                // Try IP-based approximation
+                var coords = IpLocationExtractor.getGeoLocation();
+                if (coords != null) {
+                    lat = coords.lat;
+                    lon = coords.lon;
+                } else {
+                    // Default fallback location (e.g., center of Europe/Serbia)
+                    // This ensures the feature works on localhost for development
+                    lat = 44.8176;  // Belgrade, Serbia
+                    lon = 20.4633;
+                    logger.info("Using default location for nearby search (localhost or IP geolocation failed)");
+                }
+            }
+        }
+
+        return findVideosNearby(lat, lon, effectiveRadius, effectiveUnits, page, size);
     }
 }

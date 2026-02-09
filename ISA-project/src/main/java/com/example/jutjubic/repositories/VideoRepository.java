@@ -4,7 +4,6 @@ import com.example.jutjubic.models.Video;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -14,13 +13,77 @@ import java.util.UUID;
 public interface VideoRepository extends JpaRepository<Video, UUID> {
 
     Optional<Video> findVideoById(UUID id);
-    
-    @Modifying
-    @Query("UPDATE Video v SET v.viewCount = v.viewCount + 1 WHERE v.id = :id")
-    int incrementViewCount(@Param("id") UUID id);
 
     /**
      * Pronalazi sve video objave za datog korisnika sa paginacijom.
      */
     Page<Video> findByCreatorId(UUID creatorId, Pageable pageable);
+
+    /**
+     * Finds videos within a specified radius from a center point using spatial indexing.
+     *
+     * <h3>Spatial Indexing Strategy:</h3>
+     * <p>This query uses a two-phase approach for efficient spatial search:</p>
+     * <ol>
+     *   <li><b>Phase 1 - Bounding Box Pre-filter (Index Scan):</b>
+     *       Uses B-Tree indexes on latitude and longitude columns to quickly filter
+     *       videos within a rectangular bounding box. This dramatically reduces the
+     *       dataset before applying the expensive distance calculation.</li>
+     *   <li><b>Phase 2 - Haversine Refinement:</b>
+     *       Applies the Haversine formula only to pre-filtered results to get
+     *       exact circular distance, eliminating false positives from box corners.</li>
+     * </ol>
+     *
+     * <h3>Required Indexes (see spatial_indexes.sql):</h3>
+     * <ul>
+     *   <li>idx_videos_latitude - B-Tree index on latitude column</li>
+     *   <li>idx_videos_longitude - B-Tree index on longitude column</li>
+     *   <li>idx_videos_lat_lon - Composite index on (latitude, longitude)</li>
+     * </ul>
+     *
+     * <h3>Performance:</h3>
+     * <p>The bounding box prefilter reduces full table scans to index range scans,
+     * improving query performance from O(n) to O(log n + k) where k is the number
+     * of results within the bounding box.</p>
+     *
+     * @param minLat Minimum latitude of bounding box
+     * @param maxLat Maximum latitude of bounding box
+     * @param minLon Minimum longitude of bounding box
+     * @param maxLon Maximum longitude of bounding box
+     * @param lat Center point latitude for Haversine calculation
+     * @param lon Center point longitude for Haversine calculation
+     * @param radiusMeters Search radius in meters
+     * @param pageable Pagination parameters
+     * @return Page of videos within the specified radius
+     *
+     * @see <a href="https://www.geeksforgeeks.org/dsa/understanding-efficient-spatial-indexing/">
+     *      Understanding Efficient Spatial Indexing</a>
+     */
+    @Query(value = "SELECT * FROM videos v " +
+            "WHERE v.latitude BETWEEN :minLat AND :maxLat " +
+            "AND v.longitude BETWEEN :minLon AND :maxLon " +
+            "AND (6371000 * ACOS( " +
+            "    COS(RADIANS(:lat)) * COS(RADIANS(v.latitude)) * " +
+            "    COS(RADIANS(v.longitude) - RADIANS(:lon)) + " +
+            "    SIN(RADIANS(:lat)) * SIN(RADIANS(v.latitude)) " +
+            ")) <= :radiusMeters",
+            countQuery = "SELECT count(*) FROM videos v " +
+                    "WHERE v.latitude BETWEEN :minLat AND :maxLat " +
+                    "AND v.longitude BETWEEN :minLon AND :maxLon " +
+                    "AND (6371000 * ACOS( " +
+                    "    COS(RADIANS(:lat)) * COS(RADIANS(v.latitude)) * " +
+                    "    COS(RADIANS(v.longitude) - RADIANS(:lon)) + " +
+                    "    SIN(RADIANS(:lat)) * SIN(RADIANS(v.latitude)) " +
+                    ")) <= :radiusMeters",
+            nativeQuery = true)
+    Page<Video> findNearby(
+            @Param("minLat") double minLat,
+            @Param("maxLat") double maxLat,
+            @Param("minLon") double minLon,
+            @Param("maxLon") double maxLon,
+            @Param("lat") double lat,
+            @Param("lon") double lon,
+            @Param("radiusMeters") double radiusMeters,
+            Pageable pageable
+    );
 }

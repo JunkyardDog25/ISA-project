@@ -37,8 +37,8 @@ api.interceptors.response.use(
       error.isAuthError = true;
       // Use server message if available (could be string or object with message property)
       const responseData = error?.response?.data;
-      const serverMessage = typeof responseData === 'string' 
-        ? responseData 
+      const serverMessage = typeof responseData === 'string'
+        ? responseData
         : (responseData?.message || responseData);
       error.userMessage = serverMessage || 'Please check your password and email and try again.';
     }
@@ -104,6 +104,18 @@ export function registerUser(user) {
  */
 export function loginUser(user) {
   return api.post('/api/auth/login', user);
+}
+
+/**
+ * Log out the current user.
+ * Invalidates the JWT token on the server.
+ * @param {string} token - The JWT token to invalidate
+ * @returns {Promise} - Axios response promise
+ */
+export function logoutUser(token) {
+  return api.post('/api/auth/logout', null, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
 }
 
 /**

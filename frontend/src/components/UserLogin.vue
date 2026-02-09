@@ -35,6 +35,8 @@ const apiError = ref('');
 const rateLimitRemaining = ref(0);
 let rateLimitInterval = null;
 
+
+
 // ----- Validation -----
 
 const errors = computed(() => ({
@@ -95,13 +97,9 @@ function markAllTouched() {
   touched.value.password = true;
 }
 
-async function onSubmit() {
-  markAllTouched();
-  apiError.value = '';
-
-  if (!isFormValid.value) return;
+// The core login logic (performs the API call).
+async function performLogin() {
   if (rateLimitRemaining.value > 0) return;
-
   loading.value = true;
 
   try {
@@ -120,10 +118,16 @@ async function onSubmit() {
 
     // Store user data
     if (data.id || data.username || data.email) {
-      setUser(
-        { id: data.id, username: data.username, email: data.email },
-        form.value.remember
-      );
+      const userData = {
+        id: data.id,
+        username: data.username,
+        email: data.email,
+        latitude: data.latitude || null,
+        longitude: data.longitude || null
+      };
+
+
+      setUser(userData, form.value.remember);
     }
 
     // Handle "Remember me"
@@ -143,6 +147,17 @@ async function onSubmit() {
   } finally {
     loading.value = false;
   }
+}
+
+// Entry point for the form submit.
+async function onSubmit() {
+  markAllTouched();
+  apiError.value = '';
+
+  if (!isFormValid.value) return;
+  if (rateLimitRemaining.value > 0) return;
+
+  await performLogin();
 }
 
 function handleLoginError(e) {
