@@ -76,13 +76,16 @@ public class VideoService {
     private final VideoViewRepository videoViewRepository;
     private final UserService userService;
     private final PerformanceMetricsService performanceMetricsService;
+    private final TranscodingProducerService transcodingProducerService;
 
     public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository,
-                       UserService userService, PerformanceMetricsService performanceMetricsService) {
+                       UserService userService, PerformanceMetricsService performanceMetricsService,
+                       TranscodingProducerService transcodingProducerService) {
         this.videoRepository = videoRepository;
         this.videoViewRepository = videoViewRepository;
         this.userService = userService;
         this.performanceMetricsService = performanceMetricsService;
+        this.transcodingProducerService = transcodingProducerService;
 
         // Ensure directories exist
         try {
@@ -216,6 +219,16 @@ public class VideoService {
         // Flush to ensure immediate persistence within transaction
         videoRepository.flush();
         logger.debug("Transaction flushed - video will be committed on method completion");
+
+        // Send transcoding job to message queue
+        try {
+            transcodingProducerService.sendTranscodingJob(savedVideo.getId(), savedVideo.getVideoPath());
+            logger.info("Transcoding job sent for video: {}", savedVideo.getId());
+        } catch (Exception e) {
+            logger.error("Failed to send transcoding job for video {}: {}", savedVideo.getId(), e.getMessage());
+            // Don't fail the video creation if transcoding job fails to send
+            // The video will remain with transcoded=false and can be processed later
+        }
 
         return savedVideo;
     }

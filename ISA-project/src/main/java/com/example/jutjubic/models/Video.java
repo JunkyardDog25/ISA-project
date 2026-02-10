@@ -43,6 +43,9 @@ public class Video {
     @Column(name = "is_transcoded")
     private boolean transcoded;
 
+    @Column(name = "transcoded_video_path")
+    private String transcodedVideoPath;
+
     @Column(name = "scheduled_at")
     private LocalDateTime scheduledAt;
 
