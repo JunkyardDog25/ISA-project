@@ -71,6 +71,9 @@ onUnmounted(() => {
           <li class="nav-item">
             <RouterLink to="/" class="nav-link">Home</RouterLink>
           </li>
+          <li class="nav-item">
+            <RouterLink to="/watch-party" class="nav-link">Watch Party</RouterLink>
+          </li>
           <li v-if="isLoggedIn" class="nav-item">
             <RouterLink to="/create-video" class="nav-link">Create Video</RouterLink>
           </li>
