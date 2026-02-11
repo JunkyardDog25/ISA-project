@@ -14,7 +14,8 @@ import {
   closeWatchParty,
   sendCloseRoomMessage,
   checkIsOwner,
-  getChatHistory
+  getChatHistory,
+  getActiveMembers
 } from '@/services/WatchPartyService.js';
 
 const route = useRoute();
@@ -29,6 +30,7 @@ const error = ref(null);
 const room = ref(null);
 const isOwner = ref(false);
 const memberCount = ref(0);
+const activeMembers = ref([]); // Lista aktivnih članova
 const isConnected = ref(false);
 const isConnecting = ref(false);
 
@@ -142,7 +144,18 @@ async function loadChatHistory() {
     scrollToBottom();
   } catch (e) {
     console.error('Failed to load chat history:', e);
-    // Ne prikazuj grešku korisniku, samo logiraj
+  }
+}
+
+// ----- Load Active Members -----
+
+async function loadActiveMembersList() {
+  try {
+    const response = await getActiveMembers(roomCode.value);
+    activeMembers.value = response.data.members || [];
+    memberCount.value = response.data.count || 0;
+  } catch (e) {
+    console.error('Failed to load active members:', e);
   }
 }
 
@@ -189,6 +202,8 @@ function handleWatchPartyMessage(message) {
         content: message.content || `${message.senderUsername} joined the party`,
         timestamp: message.timestamp
       });
+      // Osvježi listu članova
+      loadActiveMembersList();
       break;
     case 'LEAVE':
       addChatMessage({
@@ -196,6 +211,8 @@ function handleWatchPartyMessage(message) {
         content: message.content || `${message.senderUsername} left the party`,
         timestamp: message.timestamp
       });
+      // Osvježi listu članova
+      loadActiveMembersList();
       break;
     case 'CHAT':
       addChatMessage({
@@ -208,6 +225,8 @@ function handleWatchPartyMessage(message) {
       break;
     case 'MEMBER_COUNT_UPDATE':
       memberCount.value = parseInt(message.content) || 0;
+      // Osvježi listu članova
+      loadActiveMembersList();
       break;
     case 'ROOM_CLOSED':
       showInfo('Watch Party has been closed by the owner');
@@ -242,6 +261,12 @@ function handlePlayVideo(message) {
 async function startWatchingVideo() {
   if (currentVideoId.value) {
     try {
+      // Osvježi podatke o sobi da dobijemo najnovije elapsed vrijeme
+      const roomResponse = await getWatchPartyByCode(roomCode.value);
+      if (roomResponse.data.videoElapsedSeconds) {
+        videoStartTime.value = roomResponse.data.videoElapsedSeconds;
+      }
+
       // Fetch video details to get the video path
       const response = await getVideoById(currentVideoId.value);
       const video = response.data;
@@ -646,6 +671,32 @@ watch(() => route.params.roomCode, (newCode) => {
         </div>
 
         <div v-show="isChatExpanded" class="chat-content">
+          <!-- Active Members List -->
+          <div v-if="activeMembers.length > 0" class="members-list">
+            <div class="members-header">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              <span>Watching now</span>
+            </div>
+            <div class="members-avatars">
+              <span
+                v-for="(member, index) in activeMembers.slice(0, 5)"
+                :key="index"
+                class="member-avatar"
+                :title="member"
+              >
+                {{ member.charAt(0).toUpperCase() }}
+              </span>
+              <span v-if="activeMembers.length > 5" class="member-more">
+                +{{ activeMembers.length - 5 }}
+              </span>
+            </div>
+          </div>
+
           <div class="messages-container" ref="chatContainer">
             <div v-if="messages.length === 0" class="empty-chat">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1315,6 +1366,71 @@ watch(() => route.params.roomCode, (newCode) => {
   min-height: 0;
 }
 
+.members-list {
+  padding: 12px 16px;
+  background: #202020;
+  border-bottom: 1px solid #303030;
+}
+
+.members-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 10px;
+}
+
+.members-header svg {
+  width: 14px;
+  height: 14px;
+}
+
+.members-avatars {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.member-avatar {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #fff;
+  cursor: default;
+}
+
+.member-avatar:nth-child(2) {
+  background: linear-gradient(135deg, #3ea6ff 0%, #1a8cff 100%);
+}
+
+.member-avatar:nth-child(3) {
+  background: linear-gradient(135deg, #0f0 0%, #0a0 100%);
+}
+
+.member-avatar:nth-child(4) {
+  background: linear-gradient(135deg, #ffa500 0%, #cc8400 100%);
+}
+
+.member-avatar:nth-child(5) {
+  background: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
+}
+
+.member-more {
+  font-size: 0.75rem;
+  color: #888;
+  background: #303030;
+  padding: 6px 10px;
+  border-radius: 16px;
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;
@@ -1584,6 +1700,12 @@ watch(() => route.params.roomCode, (newCode) => {
   color: #888;
 }
 </style>
+
+
+
+
+
+
 
 
 

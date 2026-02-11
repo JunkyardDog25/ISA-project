@@ -40,7 +40,41 @@ public class WatchPartyWebSocketController {
         message.setType(WatchPartyMessageDto.MessageType.PLAY_VIDEO);
         message.setTimestamp(System.currentTimeMillis());
 
+        // Sačuvaj sistemsku poruku o promjeni videa
+        try {
+            String content = "🎬 " + message.getSenderUsername() + " started playing: " + message.getVideoTitle();
+            watchPartyService.saveMessage(
+                roomCode,
+                message.getSenderId(),
+                "System",
+                content,
+                WatchPartyMessage.MessageType.SYSTEM
+            );
+
+            // Pošalji i chat poruku o promjeni videa
+            sendVideoChangeNotification(roomCode, content);
+        } catch (Exception e) {
+            System.err.println("Failed to save video change message: " + e.getMessage());
+        }
+
         return message;
+    }
+
+    /**
+     * Šalje notifikaciju u chat kada se video promijeni.
+     */
+    private void sendVideoChangeNotification(String roomCode, String content) {
+        WatchPartyMessageDto chatMessage = new WatchPartyMessageDto();
+        chatMessage.setRoomCode(roomCode.toUpperCase());
+        chatMessage.setType(WatchPartyMessageDto.MessageType.CHAT);
+        chatMessage.setTimestamp(System.currentTimeMillis());
+        chatMessage.setContent(content);
+        chatMessage.setSenderUsername("System");
+
+        messagingTemplate.convertAndSend(
+                "/topic/watch-party/" + roomCode.toUpperCase(),
+                chatMessage
+        );
     }
 
     /**
@@ -52,9 +86,10 @@ public class WatchPartyWebSocketController {
             @DestinationVariable String roomCode,
             @Payload WatchPartyMessageDto message) {
 
-        // Ažuriraj broj članova koristeći sender ID
+        // Ažuriraj broj članova koristeći sender ID i username
         String oderId = message.getSenderId() != null ? message.getSenderId().toString() : "guest-" + System.currentTimeMillis();
-        int memberCount = watchPartyService.memberJoined(roomCode.toUpperCase(), oderId);
+        String username = message.getSenderUsername() != null ? message.getSenderUsername() : "Guest";
+        int memberCount = watchPartyService.memberJoined(roomCode.toUpperCase(), oderId, username);
 
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.JOIN);

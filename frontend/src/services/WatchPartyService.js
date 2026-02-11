@@ -115,6 +115,13 @@ export function getChatHistory(roomCode) {
   return api.get(`/api/watch-party/${roomCode}/messages`);
 }
 
+/**
+ * Dobija listu aktivnih članova u sobi.
+ */
+export function getActiveMembers(roomCode) {
+  return api.get(`/api/watch-party/${roomCode}/members`);
+}
+
 // ----- WebSocket Functions -----
 
 let stompClient = null;

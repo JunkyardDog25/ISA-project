@@ -177,5 +177,18 @@ public class WatchPartyController {
         boolean isOwner = watchPartyService.isRoomOwner(roomCode, user.getId());
         return ResponseEntity.ok(Map.of("isOwner", isOwner));
     }
+
+    /**
+     * Dobija listu aktivnih članova u sobi.
+     */
+    @GetMapping("/{roomCode}/members")
+    public ResponseEntity<Map<String, Object>> getActiveMembers(@PathVariable String roomCode) {
+        java.util.List<String> members = watchPartyService.getActiveMembers(roomCode);
+        int count = watchPartyService.getMemberCount(roomCode);
+        return ResponseEntity.ok(Map.of(
+            "members", members,
+            "count", count
+        ));
+    }
 }
 

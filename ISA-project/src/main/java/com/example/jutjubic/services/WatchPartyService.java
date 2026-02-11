@@ -36,6 +36,11 @@ public class WatchPartyService {
      */
     private final Map<String, Set<String>> roomMembers = new ConcurrentHashMap<>();
 
+    /**
+     * Mapa za praćenje usernames članova (roomCode -> Map of oderId -> username).
+     */
+    private final Map<String, Map<String, String>> roomMemberNames = new ConcurrentHashMap<>();
+
     public WatchPartyService(WatchPartyRoomRepository watchPartyRoomRepository,
                               WatchPartyMessageRepository messageRepository,
                               UserRepository userRepository,
@@ -157,6 +162,9 @@ public class WatchPartyService {
             throw new RuntimeException("Only room owner can close the room");
         }
 
+        // Obriši sve chat poruke za ovu sobu
+        messageRepository.deleteByRoomId(room.getId());
+
         room.setActive(false);
         watchPartyRoomRepository.save(room);
 
@@ -168,11 +176,13 @@ public class WatchPartyService {
      * Registruje pridruživanje člana sobi.
      * @param roomCode Kod sobe
      * @param oderId ID korisnika (može biti UUID ili session ID za goste)
+     * @param username Username korisnika
      * @return Trenutni broj članova u sobi
      */
-    public int memberJoined(String roomCode, String oderId) {
+    public int memberJoined(String roomCode, String oderId, String username) {
         roomCode = roomCode.toUpperCase();
         roomMembers.computeIfAbsent(roomCode, k -> ConcurrentHashMap.newKeySet()).add(oderId);
+        roomMemberNames.computeIfAbsent(roomCode, k -> new ConcurrentHashMap<>()).put(oderId, username);
         return getMemberCount(roomCode);
     }
 
@@ -188,6 +198,10 @@ public class WatchPartyService {
         if (members != null) {
             members.remove(oderId);
         }
+        Map<String, String> names = roomMemberNames.get(roomCode);
+        if (names != null) {
+            names.remove(oderId);
+        }
         return getMemberCount(roomCode);
     }
 
@@ -197,6 +211,17 @@ public class WatchPartyService {
     public int getMemberCount(String roomCode) {
         Set<String> members = roomMembers.get(roomCode.toUpperCase());
         return members != null ? members.size() : 0;
+    }
+
+    /**
+     * Dobija listu usernames aktivnih članova u sobi.
+     */
+    public List<String> getActiveMembers(String roomCode) {
+        Map<String, String> names = roomMemberNames.get(roomCode.toUpperCase());
+        if (names != null) {
+            return new ArrayList<>(names.values());
+        }
+        return new ArrayList<>();
     }
 
     /**
