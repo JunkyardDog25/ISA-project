@@ -11,10 +11,7 @@ import com.example.jutjubic.repositories.WatchPartyRoomRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -29,10 +26,10 @@ public class WatchPartyService {
     private final VideoRepository videoRepository;
 
     /**
-     * Mapa za praćenje broja aktivnih članova po sobi (roomCode -> memberCount).
-     * Koristi ConcurrentHashMap za thread-safety.
+     * Mapa za praćenje aktivnih članova po sobi (roomCode -> Set of userIds).
+     * Koristi ConcurrentHashMap sa synchroniziranim Set-om za thread-safety.
      */
-    private final Map<String, Integer> roomMemberCounts = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> roomMembers = new ConcurrentHashMap<>();
 
     public WatchPartyService(WatchPartyRoomRepository watchPartyRoomRepository,
                               UserRepository userRepository,
@@ -64,8 +61,8 @@ public class WatchPartyService {
 
         WatchPartyRoom savedRoom = watchPartyRoomRepository.save(room);
 
-        // Inicijalizuj brojač članova
-        roomMemberCounts.put(savedRoom.getRoomCode(), 0);
+        // Inicijalizuj Set za praćenje članova
+        roomMembers.put(savedRoom.getRoomCode(), ConcurrentHashMap.newKeySet());
 
         return WatchPartyRoomDto.fromEntity(savedRoom);
     }
@@ -156,30 +153,42 @@ public class WatchPartyService {
         watchPartyRoomRepository.save(room);
 
         // Ukloni iz praćenja članova
-        roomMemberCounts.remove(roomCode.toUpperCase());
+        roomMembers.remove(roomCode.toUpperCase());
     }
 
     /**
      * Registruje pridruživanje člana sobi.
+     * @param roomCode Kod sobe
+     * @param oderId ID korisnika (može biti UUID ili session ID za goste)
+     * @return Trenutni broj članova u sobi
      */
-    public int memberJoined(String roomCode) {
+    public int memberJoined(String roomCode, String oderId) {
         roomCode = roomCode.toUpperCase();
-        return roomMemberCounts.compute(roomCode, (k, v) -> (v == null) ? 1 : v + 1);
+        roomMembers.computeIfAbsent(roomCode, k -> ConcurrentHashMap.newKeySet()).add(oderId);
+        return getMemberCount(roomCode);
     }
 
     /**
      * Registruje napuštanje člana iz sobe.
+     * @param roomCode Kod sobe
+     * @param oderId ID korisnika
+     * @return Trenutni broj članova u sobi
      */
-    public int memberLeft(String roomCode) {
+    public int memberLeft(String roomCode, String oderId) {
         roomCode = roomCode.toUpperCase();
-        return roomMemberCounts.compute(roomCode, (k, v) -> (v == null || v <= 0) ? 0 : v - 1);
+        Set<String> members = roomMembers.get(roomCode);
+        if (members != null) {
+            members.remove(oderId);
+        }
+        return getMemberCount(roomCode);
     }
 
     /**
      * Dobija trenutni broj članova u sobi.
      */
     public int getMemberCount(String roomCode) {
-        return roomMemberCounts.getOrDefault(roomCode.toUpperCase(), 0);
+        Set<String> members = roomMembers.get(roomCode.toUpperCase());
+        return members != null ? members.size() : 0;
     }
 
     /**

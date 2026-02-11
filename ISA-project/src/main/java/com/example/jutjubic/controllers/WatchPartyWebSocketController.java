@@ -51,13 +51,14 @@ public class WatchPartyWebSocketController {
             @DestinationVariable String roomCode,
             @Payload WatchPartyMessageDto message) {
 
-        // Ažuriraj broj članova
-        int memberCount = watchPartyService.memberJoined(roomCode.toUpperCase());
+        // Ažuriraj broj članova koristeći sender ID
+        String oderId = message.getSenderId() != null ? message.getSenderId().toString() : "guest-" + System.currentTimeMillis();
+        int memberCount = watchPartyService.memberJoined(roomCode.toUpperCase(), oderId);
 
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.JOIN);
         message.setTimestamp(System.currentTimeMillis());
-        message.setContent(message.getSenderUsername() + " se pridružio/la Watch Party-u");
+        message.setContent(message.getSenderUsername() + " joined the party");
 
         // Pošalji i ažuriranje broja članova
         sendMemberCountUpdate(roomCode, memberCount);
@@ -74,13 +75,14 @@ public class WatchPartyWebSocketController {
             @DestinationVariable String roomCode,
             @Payload WatchPartyMessageDto message) {
 
-        // Ažuriraj broj članova
-        int memberCount = watchPartyService.memberLeft(roomCode.toUpperCase());
+        // Ažuriraj broj članova koristeći sender ID
+        String oderId = message.getSenderId() != null ? message.getSenderId().toString() : "unknown";
+        int memberCount = watchPartyService.memberLeft(roomCode.toUpperCase(), oderId);
 
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.LEAVE);
         message.setTimestamp(System.currentTimeMillis());
-        message.setContent(message.getSenderUsername() + " je napustio/la Watch Party");
+        message.setContent(message.getSenderUsername() + " left the party");
 
         // Pošalji i ažuriranje broja članova
         sendMemberCountUpdate(roomCode, memberCount);
