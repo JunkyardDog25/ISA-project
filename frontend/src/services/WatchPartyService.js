@@ -108,6 +108,13 @@ export function checkIsOwner(roomCode) {
   return api.get(`/api/watch-party/${roomCode}/is-owner`);
 }
 
+/**
+ * Dobija istoriju chat poruka za sobu.
+ */
+export function getChatHistory(roomCode) {
+  return api.get(`/api/watch-party/${roomCode}/messages`);
+}
+
 // ----- WebSocket Functions -----
 
 let stompClient = null;

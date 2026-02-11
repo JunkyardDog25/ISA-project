@@ -4,6 +4,7 @@ import com.example.jutjubic.models.WatchPartyRoom;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -22,10 +23,16 @@ public class WatchPartyRoomDto {
     private UUID currentVideoId;
     private String currentVideoTitle;
     private String currentVideoThumbnail;
+    private String currentVideoPath;
     private boolean active;
     private boolean isPublic;
     private int memberCount;
     private LocalDateTime createdAt;
+
+    /**
+     * Vrijeme u sekundama od početka videa (za sinhronizaciju novih članova).
+     */
+    private long videoElapsedSeconds;
 
     public WatchPartyRoomDto() {
     }
@@ -50,6 +57,13 @@ public class WatchPartyRoomDto {
             dto.setCurrentVideoId(room.getCurrentVideo().getId());
             dto.setCurrentVideoTitle(room.getCurrentVideo().getTitle());
             dto.setCurrentVideoThumbnail(room.getCurrentVideo().getThumbnailPath());
+            dto.setCurrentVideoPath(room.getCurrentVideo().getVideoPath());
+
+            // Izračunaj koliko je vremena prošlo od početka videa
+            if (room.getVideoStartedAt() != null) {
+                long elapsed = Duration.between(room.getVideoStartedAt(), LocalDateTime.now()).getSeconds();
+                dto.setVideoElapsedSeconds(Math.max(0, elapsed));
+            }
         }
 
         return dto;

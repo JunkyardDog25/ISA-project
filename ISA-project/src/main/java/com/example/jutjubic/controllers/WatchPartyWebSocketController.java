@@ -1,6 +1,7 @@
 package com.example.jutjubic.controllers;
 
 import com.example.jutjubic.dto.WatchPartyMessageDto;
+import com.example.jutjubic.models.WatchPartyMessage;
 import com.example.jutjubic.services.WatchPartyService;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -58,7 +59,22 @@ public class WatchPartyWebSocketController {
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.JOIN);
         message.setTimestamp(System.currentTimeMillis());
-        message.setContent(message.getSenderUsername() + " joined the party");
+        String content = message.getSenderUsername() + " joined the party";
+        message.setContent(content);
+
+        // Sačuvaj poruku u bazu
+        try {
+            watchPartyService.saveMessage(
+                roomCode,
+                message.getSenderId(),
+                message.getSenderUsername(),
+                content,
+                WatchPartyMessage.MessageType.JOIN
+            );
+        } catch (Exception e) {
+            // Log error but don't fail the message
+            System.err.println("Failed to save join message: " + e.getMessage());
+        }
 
         // Pošalji i ažuriranje broja članova
         sendMemberCountUpdate(roomCode, memberCount);
@@ -82,7 +98,21 @@ public class WatchPartyWebSocketController {
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.LEAVE);
         message.setTimestamp(System.currentTimeMillis());
-        message.setContent(message.getSenderUsername() + " left the party");
+        String content = message.getSenderUsername() + " left the party";
+        message.setContent(content);
+
+        // Sačuvaj poruku u bazu
+        try {
+            watchPartyService.saveMessage(
+                roomCode,
+                message.getSenderId(),
+                message.getSenderUsername(),
+                content,
+                WatchPartyMessage.MessageType.LEAVE
+            );
+        } catch (Exception e) {
+            System.err.println("Failed to save leave message: " + e.getMessage());
+        }
 
         // Pošalji i ažuriranje broja članova
         sendMemberCountUpdate(roomCode, memberCount);
@@ -102,6 +132,19 @@ public class WatchPartyWebSocketController {
         message.setRoomCode(roomCode.toUpperCase());
         message.setType(WatchPartyMessageDto.MessageType.CHAT);
         message.setTimestamp(System.currentTimeMillis());
+
+        // Sačuvaj poruku u bazu
+        try {
+            watchPartyService.saveMessage(
+                roomCode,
+                message.getSenderId(),
+                message.getSenderUsername(),
+                message.getContent(),
+                WatchPartyMessage.MessageType.CHAT
+            );
+        } catch (Exception e) {
+            System.err.println("Failed to save chat message: " + e.getMessage());
+        }
 
         return message;
     }

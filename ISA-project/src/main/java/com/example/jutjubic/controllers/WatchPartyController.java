@@ -1,6 +1,7 @@
 package com.example.jutjubic.controllers;
 
 import com.example.jutjubic.dto.CreateWatchPartyDto;
+import com.example.jutjubic.dto.WatchPartyChatMessageDto;
 import com.example.jutjubic.dto.WatchPartyRoomDto;
 import com.example.jutjubic.models.User;
 import com.example.jutjubic.services.WatchPartyService;
@@ -145,6 +146,19 @@ public class WatchPartyController {
             return ResponseEntity.ok(Map.of("message", "Room closed successfully"));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Dobija istoriju chat poruka za sobu.
+     */
+    @GetMapping("/{roomCode}/messages")
+    public ResponseEntity<List<WatchPartyChatMessageDto>> getChatHistory(@PathVariable String roomCode) {
+        try {
+            List<WatchPartyChatMessageDto> messages = watchPartyService.getMessagesForRoom(roomCode);
+            return ResponseEntity.ok(messages);
+        } catch (RuntimeException e) {
+            return ResponseEntity.notFound().build();
         }
     }
 

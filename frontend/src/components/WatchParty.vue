@@ -13,7 +13,8 @@ import {
   setWatchPartyVideo,
   closeWatchParty,
   sendCloseRoomMessage,
-  checkIsOwner
+  checkIsOwner,
+  getChatHistory
 } from '@/services/WatchPartyService.js';
 
 const route = useRoute();
@@ -36,6 +37,8 @@ const currentVideoId = ref(null);
 const currentVideoTitle = ref(null);
 const currentVideoPath = ref(null);
 const isWatchingVideo = ref(false);
+const videoStartTime = ref(0); // Vrijeme u sekundama od početka videa za sinhronizaciju
+const videoRef = ref(null); // Referenca na video element
 
 // Video selection state
 const showVideoSelector = ref(false);
@@ -84,6 +87,9 @@ async function fetchRoom() {
     if (response.data.currentVideoId) {
       currentVideoId.value = response.data.currentVideoId;
       currentVideoTitle.value = response.data.currentVideoTitle;
+      currentVideoPath.value = response.data.currentVideoPath;
+      // Sačuvaj elapsed time za sinhronizaciju
+      videoStartTime.value = response.data.videoElapsedSeconds || 0;
     }
 
     if (!room.value.active) {
@@ -100,6 +106,9 @@ async function fetchRoom() {
       }
     }
 
+    // Učitaj chat istoriju
+    await loadChatHistory();
+
     await connectToRoom();
 
   } catch (e) {
@@ -111,6 +120,29 @@ async function fetchRoom() {
     console.error('Error fetching room:', e);
   } finally {
     loading.value = false;
+  }
+}
+
+// ----- Load Chat History -----
+
+async function loadChatHistory() {
+  try {
+    const response = await getChatHistory(roomCode.value);
+    const chatMessages = response.data || [];
+
+    // Konvertuj poruke iz baze u format za prikaz
+    messages.value = chatMessages.map(msg => ({
+      type: msg.type === 'CHAT' ? 'chat' : 'system',
+      senderId: msg.senderId,
+      senderUsername: msg.senderUsername,
+      content: msg.content,
+      timestamp: msg.timestamp
+    }));
+
+    scrollToBottom();
+  } catch (e) {
+    console.error('Failed to load chat history:', e);
+    // Ne prikazuj grešku korisniku, samo logiraj
   }
 }
 
@@ -188,6 +220,8 @@ function handlePlayVideo(message) {
   if (message.videoId) {
     currentVideoId.value = message.videoId;
     currentVideoTitle.value = message.videoTitle || 'Video';
+    // Reset video start time for new video
+    videoStartTime.value = 0;
 
     if (room.value) {
       room.value.currentVideoId = message.videoId;
@@ -214,10 +248,24 @@ async function startWatchingVideo() {
       currentVideoPath.value = video.videoPath;
       currentVideoTitle.value = video.title;
       isWatchingVideo.value = true;
+
+      // Wait for video element to be mounted, then seek to synced position
+      nextTick(() => {
+        if (videoRef.value && videoStartTime.value > 0) {
+          videoRef.value.currentTime = videoStartTime.value;
+        }
+      });
     } catch (e) {
       console.error('Failed to load video:', e);
       showError('Failed to load video');
     }
+  }
+}
+
+function onVideoLoaded() {
+  // Kada se video učita, postavi poziciju na sinhronizovano vrijeme
+  if (videoRef.value && videoStartTime.value > 0) {
+    videoRef.value.currentTime = videoStartTime.value;
   }
 }
 
@@ -339,6 +387,31 @@ async function handleCloseRoom() {
   }
 }
 
+function leaveParty() {
+  // Ako je vlasnik, upozori da će se soba zatvoriti
+  if (isOwner.value) {
+    if (!confirm('As the host, leaving will close the Watch Party for everyone. Are you sure?')) {
+      return;
+    }
+    // Zatvori sobu za sve
+    handleCloseRoom();
+    return;
+  }
+
+  if (!confirm('Are you sure you want to leave this Watch Party?')) {
+    return;
+  }
+
+  // Disconnect from WebSocket (sends LEAVE message)
+  if (isConnected.value && user.value) {
+    disconnectFromWatchParty(roomCode.value, user.value);
+  }
+
+  isConnected.value = false;
+  showSuccess('You left the Watch Party');
+  router.push('/watch-party');
+}
+
 function copyRoomLink() {
   const link = `${window.location.origin}/watch-party/${roomCode.value}`;
   navigator.clipboard.writeText(link).then(() => {
@@ -428,10 +501,12 @@ watch(() => route.params.roomCode, (newCode) => {
           <div class="video-wrapper">
             <video
               v-if="currentVideoPath"
+              ref="videoRef"
               :src="`http://localhost:8080/${currentVideoPath}`"
               controls
               autoplay
               class="video-player"
+              @loadeddata="onVideoLoaded"
             ></video>
           </div>
 
@@ -495,13 +570,13 @@ watch(() => route.params.roomCode, (newCode) => {
               </svg>
               Share Invite
             </button>
-            <button v-if="isOwner" class="action-btn danger" @click="handleCloseRoom">
+            <button :class="['action-btn', isOwner ? 'danger' : 'warning']" @click="leaveParty">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="15" y1="9" x2="9" y2="15"/>
-                <line x1="9" y1="9" x2="15" y2="15"/>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
               </svg>
-              End Party
+              {{ isOwner ? 'End & Leave Party' : 'Leave Party' }}
             </button>
           </div>
 
@@ -1016,6 +1091,15 @@ watch(() => route.params.roomCode, (newCode) => {
   background: rgba(255,68,68,0.1);
 }
 
+.action-btn.warning {
+  color: #ffa500;
+  border-color: #ffa500;
+}
+
+.action-btn.warning:hover {
+  background: rgba(255,165,0,0.1);
+}
+
 .code-text {
   font-family: monospace;
   font-size: 1rem;
@@ -1500,6 +1584,15 @@ watch(() => route.params.roomCode, (newCode) => {
   color: #888;
 }
 </style>
+
+
+
+
+
+
+
+
+
 
 
 

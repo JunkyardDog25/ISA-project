@@ -49,6 +49,12 @@ public class WatchPartyRoom {
     private Video currentVideo;
 
     /**
+     * Vrijeme kada je video pokrenut (za računanje trenutne pozicije).
+     */
+    @Column(name = "video_started_at")
+    private LocalDateTime videoStartedAt;
+
+    /**
      * Da li je soba aktivna (otvorena za nove članove).
      */
     @Column(name = "is_active")

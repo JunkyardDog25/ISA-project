@@ -1,16 +1,20 @@
 package com.example.jutjubic.services;
 
 import com.example.jutjubic.dto.CreateWatchPartyDto;
+import com.example.jutjubic.dto.WatchPartyChatMessageDto;
 import com.example.jutjubic.dto.WatchPartyRoomDto;
 import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
+import com.example.jutjubic.models.WatchPartyMessage;
 import com.example.jutjubic.models.WatchPartyRoom;
 import com.example.jutjubic.repositories.UserRepository;
 import com.example.jutjubic.repositories.VideoRepository;
+import com.example.jutjubic.repositories.WatchPartyMessageRepository;
 import com.example.jutjubic.repositories.WatchPartyRoomRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -22,6 +26,7 @@ import java.util.stream.Collectors;
 public class WatchPartyService {
 
     private final WatchPartyRoomRepository watchPartyRoomRepository;
+    private final WatchPartyMessageRepository messageRepository;
     private final UserRepository userRepository;
     private final VideoRepository videoRepository;
 
@@ -32,9 +37,11 @@ public class WatchPartyService {
     private final Map<String, Set<String>> roomMembers = new ConcurrentHashMap<>();
 
     public WatchPartyService(WatchPartyRoomRepository watchPartyRoomRepository,
+                              WatchPartyMessageRepository messageRepository,
                               UserRepository userRepository,
                               VideoRepository videoRepository) {
         this.watchPartyRoomRepository = watchPartyRoomRepository;
+        this.messageRepository = messageRepository;
         this.userRepository = userRepository;
         this.videoRepository = videoRepository;
     }
@@ -130,6 +137,7 @@ public class WatchPartyService {
                 .orElseThrow(() -> new RuntimeException("Video not found"));
 
         room.setCurrentVideo(video);
+        room.setVideoStartedAt(LocalDateTime.now()); // Postavi vrijeme početka videa
         WatchPartyRoom savedRoom = watchPartyRoomRepository.save(room);
         savedRoom.setMemberCount(getMemberCount(savedRoom.getRoomCode()));
 
@@ -211,6 +219,53 @@ public class WatchPartyService {
             code.append(chars.charAt(index));
         }
         return code.toString();
+    }
+
+    // ==================== CHAT METHODS ====================
+
+    /**
+     * Čuva chat poruku u bazu.
+     */
+    @Transactional
+    public WatchPartyChatMessageDto saveMessage(String roomCode, UUID senderId, String senderUsername,
+                                                  String content, WatchPartyMessage.MessageType messageType) {
+        WatchPartyRoom room = watchPartyRoomRepository.findByRoomCode(roomCode.toUpperCase())
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+
+        User sender = null;
+        if (senderId != null) {
+            sender = userRepository.findById(senderId).orElse(null);
+        }
+
+        WatchPartyMessage message = new WatchPartyMessage(room, sender, senderUsername, content, messageType);
+        WatchPartyMessage saved = messageRepository.save(message);
+
+        return WatchPartyChatMessageDto.fromEntity(saved);
+    }
+
+    /**
+     * Dobija sve poruke za sobu (za učitavanje istorije).
+     */
+    public List<WatchPartyChatMessageDto> getMessagesForRoom(String roomCode) {
+        WatchPartyRoom room = watchPartyRoomRepository.findByRoomCode(roomCode.toUpperCase())
+                .orElseThrow(() -> new RuntimeException("Room not found"));
+
+        List<WatchPartyMessage> messages = messageRepository.findByRoomIdOrderByCreatedAtAsc(room.getId());
+
+        return messages.stream()
+                .map(WatchPartyChatMessageDto::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Briše sve poruke za sobu (poziva se kada se soba zatvori).
+     */
+    @Transactional
+    public void deleteMessagesForRoom(String roomCode) {
+        WatchPartyRoom room = watchPartyRoomRepository.findByRoomCode(roomCode.toUpperCase()).orElse(null);
+        if (room != null) {
+            messageRepository.deleteByRoomId(room.getId());
+        }
     }
 }
 
