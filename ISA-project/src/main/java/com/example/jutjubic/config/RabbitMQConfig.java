@@ -1,18 +1,28 @@
 package com.example.jutjubic.config;
 
-import org.springframework.amqp.core.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.core.AcknowledgeMode;
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-
 @Configuration
+@RequiredArgsConstructor
 public class RabbitMQConfig {
+
+    private static final String DLQ_SUFFIX = ".dlq";
+    private static final String DLX_SUFFIX = ".dlx";
+    private static final int MESSAGE_TTL_MS = 60_000;
+    private static final int PREFETCH_COUNT = 1;
 
     @Value("${transcoding.queue.name}")
     private String queueName;
@@ -23,48 +33,39 @@ public class RabbitMQConfig {
     @Value("${transcoding.routing.key}")
     private String routingKey;
 
-    // Dead Letter Queue configuration
-    private static final String DLQ_SUFFIX = ".dlq";
-    private static final String DLX_SUFFIX = ".dlx";
-    private static final int MESSAGE_TTL = 60000; // 60 seconds before retry
-
+    // ==================== Queues ====================
 
     @Bean
     public Queue transcodingQueue() {
         return QueueBuilder.durable(queueName)
-                .withArgument("x-dead-letter-exchange", exchangeName + DLX_SUFFIX)
-                .withArgument("x-dead-letter-routing-key", routingKey + DLQ_SUFFIX)
+                .deadLetterExchange(exchangeName + DLX_SUFFIX)
+                .deadLetterRoutingKey(routingKey + DLQ_SUFFIX)
                 .build();
     }
 
     @Bean
     public Queue transcodingDeadLetterQueue() {
         return QueueBuilder.durable(queueName + DLQ_SUFFIX)
-                .withArgument("x-dead-letter-exchange", exchangeName)
-                .withArgument("x-dead-letter-routing-key", routingKey)
-                .withArgument("x-message-ttl", MESSAGE_TTL)
+                .deadLetterExchange(exchangeName)
+                .deadLetterRoutingKey(routingKey)
+                .ttl(MESSAGE_TTL_MS)
                 .build();
     }
 
-    /**
-     * Creates a direct exchange for transcoding messages.
-     */
+    // ==================== Exchanges ====================
+
     @Bean
     public DirectExchange transcodingExchange() {
         return new DirectExchange(exchangeName);
     }
 
-    /**
-     * Creates Dead Letter Exchange for failed messages.
-     */
     @Bean
     public DirectExchange transcodingDeadLetterExchange() {
         return new DirectExchange(exchangeName + DLX_SUFFIX);
     }
 
-    /**
-     * Binds the queue to the exchange with the routing key.
-     */
+    // ==================== Bindings ====================
+
     @Bean
     public Binding transcodingBinding(Queue transcodingQueue, DirectExchange transcodingExchange) {
         return BindingBuilder
@@ -73,55 +74,38 @@ public class RabbitMQConfig {
                 .with(routingKey);
     }
 
-    /**
-     * Binds the Dead Letter Queue to the Dead Letter Exchange.
-     */
     @Bean
-    public Binding deadLetterBinding() {
+    public Binding deadLetterBinding(Queue transcodingDeadLetterQueue, DirectExchange transcodingDeadLetterExchange) {
         return BindingBuilder
-                .bind(transcodingDeadLetterQueue())
-                .to(transcodingDeadLetterExchange())
+                .bind(transcodingDeadLetterQueue)
+                .to(transcodingDeadLetterExchange)
                 .with(routingKey + DLQ_SUFFIX);
     }
 
-    /**
-     * JSON message converter for serializing/deserializing messages.
-     */
+    // ==================== Messaging ====================
+
     @Bean
-    @java.lang.SuppressWarnings("removal")
+    @SuppressWarnings("removal")
     public MessageConverter jsonMessageConverter() {
-        return new Jackson2JsonMessageConverter();
+        return new org.springframework.amqp.support.converter.Jackson2JsonMessageConverter();
     }
 
-    /**
-     * RabbitTemplate with JSON message converter.
-     */
     @Bean
-    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory) {
+    public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory, MessageConverter jsonMessageConverter) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
-        rabbitTemplate.setMessageConverter(jsonMessageConverter());
+        rabbitTemplate.setMessageConverter(jsonMessageConverter);
         return rabbitTemplate;
     }
 
-    /**
-     * Listener container factory with manual acknowledgment.
-     * This ensures that a message is only acknowledged after successful processing,
-     * preventing duplicate delivery to multiple consumers.
-     */
     @Bean
-    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(ConnectionFactory connectionFactory) {
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            ConnectionFactory connectionFactory,
+            MessageConverter jsonMessageConverter) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
-        factory.setMessageConverter(jsonMessageConverter());
-        // Manual acknowledgment to prevent duplicate processing
+        factory.setMessageConverter(jsonMessageConverter);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
-        // Prefetch 1 message at a time to ensure fair distribution among consumers
-        factory.setPrefetchCount(1);
+        factory.setPrefetchCount(PREFETCH_COUNT);
         return factory;
     }
 }
-
-
-
-
-
