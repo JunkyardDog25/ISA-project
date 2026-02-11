@@ -113,4 +113,21 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
             @Param("now") LocalDateTime now,
             Pageable pageable
     );
+
+    /**
+     * Pronalazi sve video objave sa nekompresovanim thumbnail-ima koje su starije od određenog datuma.
+     * Video ima nekompresovan thumbnail ako:
+     * - thumbnailPath nije NULL (ima original thumbnail)
+     * - thumbnailCompressedPath je NULL (nema kompresovanu verziju)
+     * - createdAt je manji od dateCutoff (starije od mesec dana)
+     */
+    @Query("SELECT v FROM Video v WHERE v.thumbnailPath IS NOT NULL AND v.thumbnailCompressedPath IS NULL AND v.createdAt < :dateCutoff")
+    List<Video> findVideosWithUncompressedThumbnails(@Param("dateCutoff") LocalDateTime dateCutoff);
+
+    /**
+     * Pronalazi SVE video objave sa nekompresovanim thumbnail-ima (bez obzira na starost).
+     * Koristi se za manuelnu kompresiju svih thumbnail-a.
+     */
+    @Query("SELECT v FROM Video v WHERE v.thumbnailPath IS NOT NULL AND v.thumbnailCompressedPath IS NULL")
+    List<Video> findAllVideosWithUncompressedThumbnails();
 }
