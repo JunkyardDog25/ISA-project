@@ -18,7 +18,8 @@ const MAX_VIDEO_SIZE = 200 * 1024 * 1024; // 200MB in bytes
 const form = ref({
   title: '',
   description: '',
-  tags: ''
+  tags: '',
+  scheduledAt: ''
 });
 
 // File uploads
@@ -53,6 +54,18 @@ const errors = computed(() => ({
 const isFormValid = computed(
   () => !errors.value.title && !errors.value.tags && !errors.value.videoFile && !errors.value.thumbnailFile
 );
+
+// Computed property for minimum scheduled datetime (current time)
+const minScheduledDateTime = computed(() => {
+  const now = new Date();
+  // Format: YYYY-MM-DDTHH:mm (required for datetime-local input)
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+});
 
 // Helper function to format file size
 function formatFileSize(bytes) {
@@ -185,6 +198,11 @@ async function onSubmit() {
     }
     formData.append('tags', form.value.tags ? form.value.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0).join(',') : '');
 
+    // Add scheduled time if specified
+    if (form.value.scheduledAt) {
+      formData.append('scheduledAt', form.value.scheduledAt);
+    }
+
     // Add location if available
     if (userLocation.value) {
       formData.append('latitude', userLocation.value.lat);
@@ -269,6 +287,19 @@ function handleCreateError(e) {
             {{ errors.tags }}
           </span>
           <small class="help-text">Separate multiple tags with commas</small>
+        </div>
+
+        <!-- Scheduled At -->
+        <div class="form-group">
+          <label for="scheduledAt">Schedule Video (Optional)</label>
+          <input
+            id="scheduledAt"
+            type="datetime-local"
+            v-model="form.scheduledAt"
+            :min="minScheduledDateTime"
+            placeholder="Select date and time"
+          />
+          <small class="help-text">Leave empty to publish immediately. Scheduled videos will only be visible to others after the scheduled time.</small>
         </div>
 
         <!-- Video File Upload -->
