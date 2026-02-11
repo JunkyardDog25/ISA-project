@@ -6,6 +6,10 @@ const props = defineProps({
   videoRef: {
     type: Object,
     default: null
+  },
+  isLiveMode: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -62,6 +66,9 @@ function handleVolumeChange() {
 }
 
 function seek(event) {
+  // Onemogući seekovanje u live modu
+  if (props.isLiveMode) return;
+
   if (!props.videoRef) return;
   const progressBar = event.currentTarget;
   const rect = progressBar.getBoundingClientRect();
@@ -103,6 +110,9 @@ function handleFullscreenChange() {
 }
 
 function skip(seconds) {
+  // Onemogući skipovanje u live modu
+  if (props.isLiveMode) return;
+
   if (!props.videoRef) return;
   props.videoRef.currentTime = Math.max(0, Math.min(duration.value, props.videoRef.currentTime + seconds));
 
@@ -256,10 +266,14 @@ defineExpose({
   <!-- Custom Controls -->
   <div class="video-controls" :class="{ visible: showControls || !isPlaying }">
     <!-- Progress Bar -->
-    <div class="progress-container" @click="seek">
+    <div
+      class="progress-container"
+      :class="{ 'live-mode': isLiveMode }"
+      @click="seek"
+    >
       <div class="progress-bar">
         <div class="progress-filled" :style="{ width: `${(currentTime / duration) * 100}%` }"></div>
-        <div class="progress-handle" :style="{ left: `${(currentTime / duration) * 100}%` }"></div>
+        <div v-if="!isLiveMode" class="progress-handle" :style="{ left: `${(currentTime / duration) * 100}%` }"></div>
       </div>
     </div>
 
@@ -277,15 +291,15 @@ defineExpose({
           </svg>
         </button>
 
-        <!-- Skip Backward -->
-        <button class="control-btn" @click="skip(-10)" title="Rewind 10s">
+        <!-- Skip Backward (hidden in live mode) -->
+        <button v-if="!isLiveMode" class="control-btn" @click="skip(-10)" title="Rewind 10s">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/>
           </svg>
         </button>
 
-        <!-- Skip Forward -->
-        <button class="control-btn" @click="skip(10)" title="Forward 10s">
+        <!-- Skip Forward (hidden in live mode) -->
+        <button v-if="!isLiveMode" class="control-btn" @click="skip(10)" title="Forward 10s">
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/>
           </svg>
@@ -472,6 +486,10 @@ defineExpose({
   margin-bottom: 0.5rem;
 }
 
+.progress-container.live-mode {
+  cursor: not-allowed;
+}
+
 .progress-bar {
   width: 100%;
   height: 4px;
@@ -485,11 +503,19 @@ defineExpose({
   height: 6px;
 }
 
+.progress-container.live-mode:hover .progress-bar {
+  height: 4px;
+}
+
 .progress-filled {
   height: 100%;
   background: #cc0000;
   border-radius: 2px;
   position: relative;
+}
+
+.progress-container.live-mode .progress-filled {
+  background: #cc0000;
 }
 
 .progress-handle {

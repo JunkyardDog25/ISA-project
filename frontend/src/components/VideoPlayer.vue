@@ -1,7 +1,7 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
-import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount } from '@/services/VideoService.js';
+import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount, getStreamingInfo } from '@/services/VideoService.js';
 import { getCommentsByVideoId, createComment, getCommentLimitStatus } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
@@ -25,6 +25,12 @@ const commentsLoading = ref(false);
 const newComment = ref('');
 const isSubmittingComment = ref(false);
 const isCommentFocused = ref(false);
+
+// ----- Live Streaming State -----
+const streamingInfo = ref(null);
+const isLiveMode = ref(false);
+const liveElapsedSeconds = ref(0);
+const liveSyncInterval = ref(null);
 
 // ----- Comments Pagination State -----
 const commentsPage = ref(0);
@@ -64,6 +70,9 @@ async function fetchVideo() {
     const response = await getVideoById(videoId.value);
     video.value = response.data;
 
+    // Fetch streaming info for live sync
+    await fetchStreamingInfo();
+
     // Increment view count
     await incrementViews();
 
@@ -87,6 +96,74 @@ async function fetchVideo() {
     console.error('Error fetching video:', e);
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * Dobija streaming info za video i postavlja live mode ako je potrebno.
+ */
+async function fetchStreamingInfo() {
+  try {
+    const response = await getStreamingInfo(videoId.value);
+    streamingInfo.value = response.data;
+
+    if (response.data.isLive) {
+      // Video je trenutno live - postavi elapsed seconds
+      isLiveMode.value = true;
+      liveElapsedSeconds.value = response.data.elapsedSeconds;
+
+      // Pokreni interval za sinhronizaciju (svakih 30 sekundi)
+      startLiveSyncInterval();
+    } else {
+      isLiveMode.value = false;
+      stopLiveSyncInterval();
+    }
+  } catch (e) {
+    console.error('Error fetching streaming info:', e);
+    isLiveMode.value = false;
+  }
+}
+
+/**
+ * Pokreće interval za periodičnu sinhronizaciju sa serverom u live modu.
+ */
+function startLiveSyncInterval() {
+  stopLiveSyncInterval(); // Očisti prethodni interval ako postoji
+
+  liveSyncInterval.value = setInterval(async () => {
+    try {
+      const response = await getStreamingInfo(videoId.value);
+      streamingInfo.value = response.data;
+
+      if (!response.data.isLive) {
+        // Video je završio, prelazi u VOD režim
+        isLiveMode.value = false;
+        stopLiveSyncInterval();
+      }
+    } catch (e) {
+      console.error('Error syncing streaming info:', e);
+    }
+  }, 5000); // Svakih 5 sekundi
+}
+
+/**
+ * Zaustavlja live sync interval.
+ */
+function stopLiveSyncInterval() {
+  if (liveSyncInterval.value) {
+    clearInterval(liveSyncInterval.value);
+    liveSyncInterval.value = null;
+  }
+}
+
+/**
+ * Callback kada se video učita - postavlja početnu poziciju za live mode.
+ */
+function handleVideoLoaded() {
+  if (isLiveMode.value && liveElapsedSeconds.value > 0 && videoRef.value) {
+    // Postavi video na ispravnu poziciju
+    videoRef.value.currentTime = liveElapsedSeconds.value;
+    videoRef.value.play().catch(e => console.log('Autoplay blocked:', e));
   }
 }
 
@@ -326,6 +403,11 @@ function goBack() {
 onMounted(() => {
   fetchVideo();
 });
+
+onUnmounted(() => {
+  // Cleanup live sync interval
+  stopLiveSyncInterval();
+});
 </script>
 
 <template>
@@ -351,12 +433,19 @@ onMounted(() => {
         @mousemove="videoControlsRef?.handleMouseMove()"
         @mouseleave="videoControlsRef?.handleMouseLeave()"
       >
+        <!-- Live Badge -->
+        <div v-if="isLiveMode" class="live-badge">
+          <span class="live-dot"></span>
+          LIVE
+        </div>
+
         <video
           ref="videoRef"
           class="video-player"
           autoplay
           :poster="thumbnailUrl"
           @click="videoControlsRef?.togglePlay()"
+          @loadeddata="handleVideoLoaded"
         >
           <source :src="videoUrl" type="video/mp4" />
           Your browser does not support the video tag.
@@ -366,6 +455,7 @@ onMounted(() => {
         <CustomVideoPlayer
           ref="videoControlsRef"
           :video-ref="videoRef"
+          :is-live-mode="isLiveMode"
         />
       </div>
 
@@ -1123,6 +1213,45 @@ onMounted(() => {
 .load-more-btn .spinner-small {
   width: 16px;
   height: 16px;
+}
+
+/* Live Badge */
+.live-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #cc0000;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
 }
 
 /* Responsive */

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
 import { useAuth } from '@/composables/useAuth.js';
 import { getVideosPaginated, getDailyPopularVideos, getVideosNearby, getNearbyConfig } from '@/services/VideoService.js';
@@ -13,7 +13,8 @@ const { isLoggedIn, user } = useAuth();
 const loading = ref(true);
 const error = ref(null);
 
-// ----- Pagination (Server-side) -----
+// ----- Live Status Update Interval -----
+const liveStatusInterval = ref(null);// ----- Pagination (Server-side) -----
 
 const videosPerPage = 16;
 const totalPages = ref(0);
@@ -67,6 +68,64 @@ async function loadNearbyConfig() {
   }
 }
 
+// Helper to parse duration string (HH:mm:ss or mm:ss or seconds) to seconds
+function parseDurationToSeconds(duration) {
+  if (!duration) return 0;
+
+  // If it's already a number, return it
+  if (typeof duration === 'number') return duration;
+
+  // Convert to string if needed
+  const durationStr = String(duration);
+
+  // Handle ISO 8601 duration format (PT1M30S)
+  if (durationStr.startsWith('PT')) {
+    let seconds = 0;
+    const hoursMatch = durationStr.match(/(\d+)H/);
+    const minutesMatch = durationStr.match(/(\d+)M/);
+    const secondsMatch = durationStr.match(/(\d+)S/);
+    if (hoursMatch) seconds += parseInt(hoursMatch[1]) * 3600;
+    if (minutesMatch) seconds += parseInt(minutesMatch[1]) * 60;
+    if (secondsMatch) seconds += parseInt(secondsMatch[1]);
+    return seconds;
+  }
+
+  // Handle time format HH:mm:ss or mm:ss
+  const parts = durationStr.split(':').map(Number);
+  if (parts.length === 3) {
+    // HH:mm:ss
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  } else if (parts.length === 2) {
+    // mm:ss
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 1 && !isNaN(parts[0])) {
+    // Just seconds
+    return parts[0];
+  }
+  return 0;
+}
+
+// Helper to check if video is currently live (scheduled, started, but not ended)
+function checkIsLive(scheduledAt, duration) {
+  if (!scheduledAt) return false;
+
+  const scheduledDate = new Date(scheduledAt);
+  const now = new Date();
+
+  // Video hasn't started yet
+  if (scheduledDate > now) return false;
+
+  // Video has started - check if it has ended
+  const elapsedSeconds = Math.floor((now - scheduledDate) / 1000);
+  const durationSeconds = parseDurationToSeconds(duration);
+
+  // If duration is 0 or unknown, assume it's still live if started
+  if (durationSeconds === 0) return true;
+
+  // Video is live if elapsed time is less than duration
+  return elapsedSeconds < durationSeconds;
+}
+
 // Helper to map API video object to local view model (reuse for both lists)
 function mapApiVideo(v) {
   return {
@@ -79,7 +138,9 @@ function mapApiVideo(v) {
     views: formatViews(v.viewCount),
     uploadedAt: formatDate(v.createdAt),
     duration: v.duration,
-    tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : []
+    tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : [],
+    scheduledAt: v.scheduledAt,
+    isLive: checkIsLive(v.scheduledAt, v.duration)
   };
 }
 
@@ -99,6 +160,7 @@ async function fetchVideos() {
         trendingVideos.value = trendData.map(dp => {
           // endpoint returns DailyPopularVideo, which contains a `video` field
           const v = dp?.video || dp;
+
           return {
             id: v.id,
             title: v.title,
@@ -109,7 +171,9 @@ async function fetchVideos() {
             views: formatViews(v.viewCount),
             uploadedAt: formatDate(v.createdAt),
             duration: v.duration,
-            tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : []
+            tags: v.tags ? v.tags.split(',').map(t => t.trim()).filter(t => t) : [],
+            scheduledAt: v.scheduledAt,
+            isLive: checkIsLive(v.scheduledAt, v.duration)
           };
         });
       } catch (e) {
@@ -132,18 +196,22 @@ async function fetchVideos() {
     }
 
     // Map API response to display format
-    videos.value = data.content.map(video => ({
-      id: video.id,
-      title: video.title,
-      description: video.description,
-      thumbnail: `http://localhost:8080/${video.thumbnailPath}`,
-      channel: video.creator?.username || 'Unknown',
-      creatorId: video.creator?.id || null,
-      views: formatViews(video.viewCount),
-      uploadedAt: formatDate(video.createdAt),
-      duration: video.duration,
-      tags: video.tags ? video.tags.split(',').map(t => t.trim()).filter(t => t) : []
-    }));
+    videos.value = data.content.map(video => {
+      return {
+        id: video.id,
+        title: video.title,
+        description: video.description,
+        thumbnail: `http://localhost:8080/${video.thumbnailPath}`,
+        channel: video.creator?.username || 'Unknown',
+        creatorId: video.creator?.id || null,
+        views: formatViews(video.viewCount),
+        uploadedAt: formatDate(video.createdAt),
+        duration: video.duration,
+        tags: video.tags ? video.tags.split(',').map(t => t.trim()).filter(t => t) : [],
+        scheduledAt: video.scheduledAt,
+        isLive: checkIsLive(video.scheduledAt, video.duration)
+      };
+    });
 
     // Exclude trending videos from the paginated list for the "Other Videos" section
     const trendingIds = new Set(trendingVideos.value.map(t => t.id));
@@ -395,10 +463,49 @@ function formatDate(dateString) {
   return 'Just now';
 }
 
+/**
+ * Ažurira isLive status za sve video objave.
+ * Poziva se periodično da proveri da li je neki live stream završio.
+ */
+function updateLiveStatus() {
+  // Update videos array
+  videos.value = videos.value.map(v => ({
+    ...v,
+    isLive: checkIsLive(v.scheduledAt, v.duration)
+  }));
+
+  // Update trending videos
+  trendingVideos.value = trendingVideos.value.map(v => ({
+    ...v,
+    isLive: checkIsLive(v.scheduledAt, v.duration)
+  }));
+
+  // Update other videos (derived from videos)
+  const trendingIds = new Set(trendingVideos.value.map(t => t.id));
+  otherVideos.value = videos.value.filter(v => !trendingIds.has(v.id));
+
+  // Update nearby results
+  nearbyResults.value = nearbyResults.value.map(v => ({
+    ...v,
+    isLive: checkIsLive(v.scheduledAt, v.duration)
+  }));
+}
+
 // ----- Lifecycle -----
 
 onMounted(() => {
   fetchVideos();
+
+  // Start interval to update live status every 10 seconds
+  liveStatusInterval.value = setInterval(updateLiveStatus, 10000);
+});
+
+onUnmounted(() => {
+  // Clear live status interval
+  if (liveStatusInterval.value) {
+    clearInterval(liveStatusInterval.value);
+    liveStatusInterval.value = null;
+  }
 });
 
 // ----- Pagination Methods -----
@@ -552,6 +659,12 @@ const pageNumbers = computed(() => {
               <div class="thumbnail-wrapper">
                 <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
 
+                <!-- Live Badge -->
+                <div v-if="video.isLive" class="live-badge">
+                  <span class="live-dot"></span>
+                  LIVE
+                </div>
+
                 <div class="play-overlay">
                   <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M8 5v14l11-7z" />
@@ -617,6 +730,13 @@ const pageNumbers = computed(() => {
         >
           <div class="thumbnail-wrapper">
             <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
+
+            <!-- Live Badge -->
+            <div v-if="video.isLive" class="live-badge">
+              <span class="live-dot"></span>
+              LIVE
+            </div>
+
             <div class="play-overlay">
               <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8 5v14l11-7z" />
@@ -684,6 +804,13 @@ const pageNumbers = computed(() => {
           >
             <div class="thumbnail-wrapper">
               <img :src="video.thumbnail" :alt="video.title" class="thumbnail" />
+
+              <!-- Live Badge -->
+              <div v-if="video.isLive" class="live-badge">
+                <span class="live-dot"></span>
+                LIVE
+              </div>
+
               <div class="play-overlay">
                 <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
@@ -1097,6 +1224,45 @@ const pageNumbers = computed(() => {
   position: relative;
   aspect-ratio: 16 / 9;
   overflow: hidden;
+}
+
+/* Live Badge */
+.live-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #cc0000;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  z-index: 10;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  background: white;
+  border-radius: 50%;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
 }
 
 .thumbnail {

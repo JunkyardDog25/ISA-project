@@ -171,3 +171,25 @@ export function getNearbyConfig() {
   return api.get('/api/videos/nearby/config');
 }
 
+/**
+ * Get videos created by the currently logged-in user (including scheduled ones).
+ * @param {number} page - Page number (0-based)
+ * @param {number} size - Number of items per page
+ * @returns {Promise} - Axios response promise with paginated video list
+ */
+export function getMyVideos(page = 0, size = 16) {
+  return api.get('/api/videos/my-videos', {
+    params: { page, size }
+  });
+}
+
+/**
+ * Get streaming info for a video (live streaming synchronization).
+ * For scheduled videos, returns whether the video is currently "live"
+ * and how many seconds have elapsed since the scheduled time.
+ * @param {string} videoId - Video UUID
+ * @returns {Promise} - Axios response promise with { isLive, isVod, elapsedSeconds, scheduledAt, remainingSeconds? }
+ */
+export function getStreamingInfo(videoId) {
+  return api.get(`/api/videos/${videoId}/streaming-info`);
+}
