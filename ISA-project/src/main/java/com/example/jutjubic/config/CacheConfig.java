@@ -7,8 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Konfiguracija za keširanje komentara.
- * Koristi ConcurrentMapCacheManager kao in-memory cache provider.
+ * Configuration for application caching.
+ * Uses ConcurrentMapCacheManager as an in-memory cache provider.
  */
 @Configuration
 @EnableCaching
