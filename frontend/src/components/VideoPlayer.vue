@@ -6,6 +6,7 @@ import { getCommentsByVideoId, createComment, getCommentLimitStatus } from '@/se
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
 import CustomVideoPlayer from '@/components/common/CustomVideoPlayer.vue';
+import LiveChat from '@/components/LiveChat.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -31,6 +32,7 @@ const streamingInfo = ref(null);
 const isLiveMode = ref(false);
 const liveElapsedSeconds = ref(0);
 const liveSyncInterval = ref(null);
+const isChatVisible = ref(true); // Chat overlay visibility toggle
 
 // ----- Comments Pagination State -----
 const commentsPage = ref(0);
@@ -427,36 +429,63 @@ onUnmounted(() => {
 
     <!-- Video Content -->
     <div v-else-if="video" class="video-content">
-      <!-- Video Player -->
-      <div
-        class="video-player-container"
-        @mousemove="videoControlsRef?.handleMouseMove()"
-        @mouseleave="videoControlsRef?.handleMouseLeave()"
-      >
-        <!-- Live Badge -->
-        <div v-if="isLiveMode" class="live-badge">
-          <span class="live-dot"></span>
-          LIVE
-        </div>
-
-        <video
-          ref="videoRef"
-          class="video-player"
-          autoplay
-          :poster="thumbnailUrl"
-          @click="videoControlsRef?.togglePlay()"
-          @loadeddata="handleVideoLoaded"
+      <!-- Video Player with Chat Overlay -->
+      <div class="video-with-chat" :class="{ 'chat-visible': isLiveMode && isChatVisible }">
+        <div
+          class="video-player-container"
+          @mousemove="videoControlsRef?.handleMouseMove()"
+          @mouseleave="videoControlsRef?.handleMouseLeave()"
         >
-          <source :src="videoUrl" type="video/mp4" />
-          Your browser does not support the video tag.
-        </video>
+          <!-- Live Badge -->
+          <div v-if="isLiveMode" class="live-badge">
+            <span class="live-dot"></span>
+            LIVE
+          </div>
 
-        <!-- Video Controls Component -->
-        <CustomVideoPlayer
-          ref="videoControlsRef"
-          :video-ref="videoRef"
-          :is-live-mode="isLiveMode"
-        />
+          <!-- Chat Toggle Button -->
+          <button
+            v-if="isLiveMode"
+            class="chat-toggle-btn"
+            @click="isChatVisible = !isChatVisible"
+            :title="isChatVisible ? 'Sakrij chat' : 'Prikaži chat'"
+          >
+            <svg v-if="isChatVisible" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+              <path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+            </svg>
+          </button>
+
+          <video
+            ref="videoRef"
+            class="video-player"
+            autoplay
+            :poster="thumbnailUrl"
+            @click="videoControlsRef?.togglePlay()"
+            @loadeddata="handleVideoLoaded"
+          >
+            <source :src="videoUrl" type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+
+          <!-- Video Controls Component -->
+          <CustomVideoPlayer
+            ref="videoControlsRef"
+            :video-ref="videoRef"
+            :is-live-mode="isLiveMode"
+          />
+
+          <!-- Live Chat Overlay (inside player, right side) -->
+          <div v-if="isLiveMode" v-show="isChatVisible" class="chat-overlay">
+            <LiveChat
+              :video-id="videoId"
+              :is-live="isLiveMode"
+              :overlay-mode="true"
+            />
+          </div>
+        </div>
       </div>
 
       <!-- Video Info Section -->
@@ -521,6 +550,7 @@ onUnmounted(() => {
             {{ isDescriptionExpanded ? 'Show less' : '...more' }}
           </span>
         </div>
+
 
         <!-- Comments Section -->
         <div class="comments-section">
@@ -707,9 +737,14 @@ onUnmounted(() => {
 
 /* Video Content */
 .video-content {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 1rem;
+}
+
+/* Video with Chat Layout */
+.video-with-chat {
+  position: relative;
 }
 
 /* Video Player */
@@ -728,6 +763,66 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
+/* Chat Toggle Button */
+.chat-toggle-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 95;  /* Below header z-index (100) */
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.chat-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.05);
+}
+
+.chat-toggle-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Chat Overlay */
+.chat-overlay {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  bottom: 90px;  /* Above video controls/seek bar */
+  width: 320px;
+  z-index: 90;  /* Below header z-index (100) */
+  pointer-events: auto;
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Fullscreen chat overlay adjustments */
+.video-player-container:fullscreen .chat-overlay {
+  top: 16px;
+  bottom: 90px;
+  z-index: 150;  /* Higher z-index in fullscreen */
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* Fullscreen styles */
 .video-player-container:fullscreen {
   border-radius: 0;
@@ -736,6 +831,10 @@ onUnmounted(() => {
 .video-player-container:fullscreen .video-player {
   height: 100vh;
   aspect-ratio: unset;
+}
+
+.video-player-container:fullscreen .chat-toggle-btn {
+  z-index: 160;  /* Higher z-index in fullscreen */
 }
 
 /* Video Info */
@@ -1213,6 +1312,12 @@ onUnmounted(() => {
 .load-more-btn .spinner-small {
   width: 16px;
   height: 16px;
+}
+
+/* Live Chat Container */
+.live-chat-container {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
 }
 
 /* Live Badge */
