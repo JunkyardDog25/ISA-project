@@ -1,0 +1,140 @@
+package com.example.jutjubic.controllers;
+
+import com.example.jutjubic.dto.WatchPartyMessageDto;
+import com.example.jutjubic.services.WatchPartyService;
+import org.springframework.messaging.handler.annotation.DestinationVariable;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * WebSocket kontroler za Watch Party sinhronizaciju.
+ * Omogućava real-time komunikaciju između članova Watch Party sobe.
+ */
+@RestController
+public class WatchPartyWebSocketController {
+
+    private final WatchPartyService watchPartyService;
+    private final SimpMessagingTemplate messagingTemplate;
+
+    public WatchPartyWebSocketController(WatchPartyService watchPartyService,
+                                          SimpMessagingTemplate messagingTemplate) {
+        this.watchPartyService = watchPartyService;
+        this.messagingTemplate = messagingTemplate;
+    }
+
+    /**
+     * Vlasnik sobe pokreće video - šalje PLAY_VIDEO poruku svim članovima.
+     * Svi članovi primaju ovu poruku i treba da otvore stranicu tog videa.
+     */
+    @MessageMapping("/watch-party/{roomCode}/play")
+    @SendTo("/topic/watch-party/{roomCode}")
+    public WatchPartyMessageDto playVideo(
+            @DestinationVariable String roomCode,
+            @Payload WatchPartyMessageDto message) {
+
+        message.setRoomCode(roomCode.toUpperCase());
+        message.setType(WatchPartyMessageDto.MessageType.PLAY_VIDEO);
+        message.setTimestamp(System.currentTimeMillis());
+
+        return message;
+    }
+
+    /**
+     * Korisnik se pridružuje Watch Party sobi.
+     */
+    @MessageMapping("/watch-party/{roomCode}/join")
+    @SendTo("/topic/watch-party/{roomCode}")
+    public WatchPartyMessageDto userJoined(
+            @DestinationVariable String roomCode,
+            @Payload WatchPartyMessageDto message) {
+
+        // Ažuriraj broj članova
+        int memberCount = watchPartyService.memberJoined(roomCode.toUpperCase());
+
+        message.setRoomCode(roomCode.toUpperCase());
+        message.setType(WatchPartyMessageDto.MessageType.JOIN);
+        message.setTimestamp(System.currentTimeMillis());
+        message.setContent(message.getSenderUsername() + " se pridružio/la Watch Party-u");
+
+        // Pošalji i ažuriranje broja članova
+        sendMemberCountUpdate(roomCode, memberCount);
+
+        return message;
+    }
+
+    /**
+     * Korisnik napušta Watch Party sobu.
+     */
+    @MessageMapping("/watch-party/{roomCode}/leave")
+    @SendTo("/topic/watch-party/{roomCode}")
+    public WatchPartyMessageDto userLeft(
+            @DestinationVariable String roomCode,
+            @Payload WatchPartyMessageDto message) {
+
+        // Ažuriraj broj članova
+        int memberCount = watchPartyService.memberLeft(roomCode.toUpperCase());
+
+        message.setRoomCode(roomCode.toUpperCase());
+        message.setType(WatchPartyMessageDto.MessageType.LEAVE);
+        message.setTimestamp(System.currentTimeMillis());
+        message.setContent(message.getSenderUsername() + " je napustio/la Watch Party");
+
+        // Pošalji i ažuriranje broja članova
+        sendMemberCountUpdate(roomCode, memberCount);
+
+        return message;
+    }
+
+    /**
+     * Chat poruka u Watch Party sobi.
+     */
+    @MessageMapping("/watch-party/{roomCode}/chat")
+    @SendTo("/topic/watch-party/{roomCode}")
+    public WatchPartyMessageDto chatMessage(
+            @DestinationVariable String roomCode,
+            @Payload WatchPartyMessageDto message) {
+
+        message.setRoomCode(roomCode.toUpperCase());
+        message.setType(WatchPartyMessageDto.MessageType.CHAT);
+        message.setTimestamp(System.currentTimeMillis());
+
+        return message;
+    }
+
+    /**
+     * Vlasnik zatvara sobu.
+     */
+    @MessageMapping("/watch-party/{roomCode}/close")
+    @SendTo("/topic/watch-party/{roomCode}")
+    public WatchPartyMessageDto closeRoom(
+            @DestinationVariable String roomCode,
+            @Payload WatchPartyMessageDto message) {
+
+        message.setRoomCode(roomCode.toUpperCase());
+        message.setType(WatchPartyMessageDto.MessageType.ROOM_CLOSED);
+        message.setTimestamp(System.currentTimeMillis());
+        message.setContent("Watch Party soba je zatvorena od strane vlasnika");
+
+        return message;
+    }
+
+    /**
+     * Šalje ažuriranje broja članova svim korisnicima u sobi.
+     */
+    private void sendMemberCountUpdate(String roomCode, int memberCount) {
+        WatchPartyMessageDto countMessage = new WatchPartyMessageDto();
+        countMessage.setRoomCode(roomCode.toUpperCase());
+        countMessage.setType(WatchPartyMessageDto.MessageType.MEMBER_COUNT_UPDATE);
+        countMessage.setTimestamp(System.currentTimeMillis());
+        countMessage.setContent(String.valueOf(memberCount));
+
+        messagingTemplate.convertAndSend(
+                "/topic/watch-party/" + roomCode.toUpperCase(),
+                countMessage
+        );
+    }
+}
+

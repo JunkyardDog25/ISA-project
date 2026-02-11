@@ -10,6 +10,8 @@ import CreateVideo from '@/components/CreateVideo.vue';
 import UserProfile from '@/components/UserProfile.vue';
 import PerformanceDashboard from '@/components/PerformanceDashboard.vue';
 import SimulationDashboard from '@/components/SimulationDashboard.vue';
+import WatchPartyList from '@/components/WatchPartyList.vue';
+import WatchParty from '@/components/WatchParty.vue';
 
 // ----- Route Definitions -----
 
@@ -62,6 +64,16 @@ const routes = [
     path: '/simulation',
     name: 'simulation',
     component: SimulationDashboard
+  },
+  {
+    path: '/watch-party',
+    name: 'watch-party-list',
+    component: WatchPartyList
+  },
+  {
+    path: '/watch-party/:roomCode',
+    name: 'watch-party',
+    component: WatchParty
   }
 ];
 
