@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -51,7 +52,8 @@ class VideoController {
             @RequestParam(value = "latitude", required = false) Double latitude,
             @RequestParam(value = "longitude", required = false) Double longitude,
             @RequestParam("videoFile") MultipartFile videoFile,
-            @RequestParam("thumbnailFile") MultipartFile thumbnailFile) {
+            @RequestParam("thumbnailFile") MultipartFile thumbnailFile,
+            @RequestParam(value = "scheduledAt", required = false) LocalDateTime scheduledAt) {
         try {
             User authenticatedUser = userService.getLoggedUser();
 
@@ -62,8 +64,14 @@ class VideoController {
 
             logger.info("Creating video for user: {} (ID: {})", authenticatedUser.getUsername(), authenticatedUser.getId());
 
+            // Validacija zakazanog vremena - mora biti u budućnosti
+            if (scheduledAt != null && scheduledAt.isBefore(LocalDateTime.now())) {
+                logger.warn("Scheduled time is in the past: {}", scheduledAt);
+                return ResponseEntity.status(400).body("Scheduled time must be in the future");
+            }
+
             Video video = videoService.createVideoWithFiles(title, description, tags, latitude, longitude,
-                    videoFile, thumbnailFile, authenticatedUser);
+                    videoFile, thumbnailFile, authenticatedUser, scheduledAt);
             logger.info("Video created successfully with ID: {}", video.getId());
 
             return ResponseEntity.ok(video);
@@ -110,6 +118,95 @@ class VideoController {
     public ResponseEntity<ViewResponseDto> incrementViews(@PathVariable UUID videoId) {
         ViewResponseDto response = videoService.incrementViews(videoId);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Dobija informacije o streaming statusu videa.
+     * Za zakazane video objave vraća da li je video trenutno "live" i koliko sekundi je prošlo
+     * od zakazanog vremena (za sinhronizaciju svih gledalaca).
+     *
+     * @param videoId ID videa
+     * @return Streaming info sa isLive, elapsedSeconds, scheduledAt
+     */
+    @GetMapping("/{videoId}/streaming-info")
+    public ResponseEntity<?> getStreamingInfo(@PathVariable UUID videoId) {
+        Video video = videoService.getVideoById(videoId);
+        
+        if (video == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> streamingInfo = new HashMap<>();
+        LocalDateTime scheduledAt = video.getScheduledAt();
+        LocalDateTime now = LocalDateTime.now();
+
+        if (scheduledAt == null) {
+            // Video nije zakazan - normalan VOD režim
+            streamingInfo.put("isLive", false);
+            streamingInfo.put("isVod", true);
+            streamingInfo.put("elapsedSeconds", 0);
+            streamingInfo.put("scheduledAt", null);
+        } else if (now.isBefore(scheduledAt)) {
+            // Video još nije dostupan
+            streamingInfo.put("isLive", false);
+            streamingInfo.put("isVod", false);
+            streamingInfo.put("elapsedSeconds", 0);
+            streamingInfo.put("scheduledAt", scheduledAt.toString());
+            streamingInfo.put("startsIn", java.time.Duration.between(now, scheduledAt).getSeconds());
+        } else {
+            // Video je live - izračunaj koliko sekundi je prošlo od scheduledAt
+            long elapsedSeconds = java.time.Duration.between(scheduledAt, now).getSeconds();
+            
+            // Proveri da li je video završio (elapsed > duration)
+            // Duration je u formatu HH:mm:ss, pretvaramo u sekunde
+            long durationSeconds = 0;
+            if (video.getDuration() != null) {
+                durationSeconds = video.getDuration().toLocalTime().toSecondOfDay();
+            }
+            
+            if (durationSeconds > 0 && elapsedSeconds >= durationSeconds) {
+                // Video je završio, prelazi u VOD režim
+                streamingInfo.put("isLive", false);
+                streamingInfo.put("isVod", true);
+                streamingInfo.put("elapsedSeconds", 0);
+                streamingInfo.put("scheduledAt", scheduledAt.toString());
+            } else {
+                // Video je trenutno live
+                streamingInfo.put("isLive", true);
+                streamingInfo.put("isVod", false);
+                streamingInfo.put("elapsedSeconds", elapsedSeconds);
+                streamingInfo.put("scheduledAt", scheduledAt.toString());
+                if (durationSeconds > 0) {
+                    streamingInfo.put("remainingSeconds", durationSeconds - elapsedSeconds);
+                }
+            }
+        }
+
+        return ResponseEntity.ok(streamingInfo);
+    }
+
+    /**
+     * Dobija paginiranu listu video objava trenutno prijavljenog korisnika.
+     * Uključuje i zakazane video objave koje još nisu dostupne javnosti.
+     *
+     * @param page Broj stranice (0-based)
+     * @param size Veličina stranice
+     * @return Paginirana lista video objava korisnika
+     */
+    @GetMapping("/my-videos")
+    public ResponseEntity<?> getMyVideos(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "16") int size
+    ) {
+        User authenticatedUser = userService.getLoggedUser();
+
+        if (authenticatedUser == null) {
+            logger.warn("Unauthorized attempt to access my videos");
+            return ResponseEntity.status(401).body("Unauthorized");
+        }
+
+        PageResponse<Video> videos = videoService.getVideosByUserId(authenticatedUser.getId(), page, size);
+        return ResponseEntity.ok(videos);
     }
 
     /**

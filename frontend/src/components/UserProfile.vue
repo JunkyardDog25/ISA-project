@@ -79,7 +79,9 @@ async function fetchVideos() {
       thumbnail: `http://localhost:8080/${video.thumbnailPath}`,
       views: formatViews(video.viewCount),
       uploadedAt: formatDate(video.createdAt),
-      duration: video.duration
+      duration: video.duration,
+      scheduledAt: video.scheduledAt,
+      isScheduled: video.scheduledAt && new Date(video.scheduledAt) > new Date()
     }));
 
     // Update pagination state from response metadata
@@ -153,6 +155,18 @@ function formatMemberSince(dateString) {
   });
 }
 
+function formatScheduledDate(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('sr-RS', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 // ----- Lifecycle -----
 
 onMounted(() => {
@@ -169,6 +183,14 @@ function goToPage(page) {
 
 function goToVideo(id) {
   router.push({ name: 'video', params: { id } });
+}
+
+function handleVideoClick(video) {
+  // Ako je video zakazan i korisnik nije vlasnik, blokiraj pristup
+  if (video.isScheduled && !isOwnProfile.value) {
+    return; // Ne radi ništa
+  }
+  goToVideo(video.id);
 }
 
 function goBack() {
@@ -275,7 +297,11 @@ const pageNumbers = computed(() => {
             v-for="video in videos"
             :key="video.id"
             class="video-card"
-            @click="goToVideo(video.id)"
+            :class="{
+              'scheduled-video': video.isScheduled && isOwnProfile,
+              'unavailable-video': video.isScheduled && !isOwnProfile
+            }"
+            @click="handleVideoClick(video)"
           >
             <!-- Thumbnail -->
             <div class="thumbnail-wrapper">
@@ -284,10 +310,25 @@ const pageNumbers = computed(() => {
                 :alt="video.title"
                 class="thumbnail"
               />
-              <div class="play-overlay">
+              <div class="play-overlay" v-if="!video.isScheduled || isOwnProfile">
                 <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
                 </svg>
+              </div>
+              <!-- Unavailable overlay for scheduled videos (visible to non-owners) -->
+              <div v-if="video.isScheduled && !isOwnProfile" class="unavailable-overlay">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="lock-icon">
+                  <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                </svg>
+                <span class="unavailable-text">Dostupno {{ formatScheduledDate(video.scheduledAt) }}</span>
+              </div>
+              <!-- Scheduled Badge (only visible to owner) -->
+              <div v-if="video.isScheduled && isOwnProfile" class="scheduled-badge">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="clock-icon">
+                  <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8z"/>
+                  <path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                </svg>
+                <span>Zakazano: {{ formatScheduledDate(video.scheduledAt) }}</span>
               </div>
             </div>
 
@@ -645,6 +686,82 @@ const pageNumbers = computed(() => {
 .page-btn.ellipsis {
   border: none;
   cursor: default;
+}
+
+/* Scheduled Videos */
+.scheduled-video {
+  position: relative;
+}
+
+.scheduled-video .thumbnail-wrapper::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.scheduled-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 152, 0, 0.95);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: white;
+  z-index: 10;
+}
+
+.scheduled-badge .clock-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* Unavailable Videos (scheduled, for non-owners) */
+.unavailable-video {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.unavailable-video:hover {
+  transform: none;
+}
+
+.unavailable-video:hover .thumbnail {
+  transform: none;
+}
+
+.unavailable-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  z-index: 10;
+}
+
+.unavailable-overlay .lock-icon {
+  width: 48px;
+  height: 48px;
+  color: white;
+}
+
+.unavailable-overlay .unavailable-text {
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-align: center;
+  padding: 0 1rem;
 }
 
 /* Responsive */

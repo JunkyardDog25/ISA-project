@@ -54,6 +54,14 @@ export function useToast() {
   }
 
   /**
+   * Show an info toast.
+   * @param {string} message - Info message
+   */
+  function showInfo(message) {
+    showToast(message, 'info');
+  }
+
+  /**
    * Remove a toast by ID.
    * @param {number} id - Toast ID
    */
@@ -78,6 +86,7 @@ export function useToast() {
     showToast,
     showError,
     showSuccess,
+    showInfo,
     removeToast,
     clearToasts
   };

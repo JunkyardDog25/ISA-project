@@ -1,7 +1,6 @@
 package com.example.jutjubic.services;
 
 import com.example.jutjubic.dto.CreateVideoDto;
-import com.example.jutjubic.dto.VideoDto;
 import com.example.jutjubic.dto.VideoViewDto;
 import com.example.jutjubic.dto.ViewResponseDto;
 import com.example.jutjubic.models.User;
@@ -29,6 +28,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.sql.Time;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -76,13 +76,18 @@ public class VideoService {
     private final VideoViewRepository videoViewRepository;
     private final UserService userService;
     private final PerformanceMetricsService performanceMetricsService;
+    private final TranscodingProducerService transcodingProducerService;
+    private final VideoMetadataService videoMetadataService;
 
     public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository,
-                       UserService userService, PerformanceMetricsService performanceMetricsService) {
+                        UserService userService, PerformanceMetricsService performanceMetricsService,
+                        TranscodingProducerService transcodingProducerService, VideoMetadataService videoMetadataService) {
         this.videoRepository = videoRepository;
         this.videoViewRepository = videoViewRepository;
         this.userService = userService;
         this.performanceMetricsService = performanceMetricsService;
+        this.transcodingProducerService = transcodingProducerService;
+        this.videoMetadataService = videoMetadataService;
 
         // Ensure directories exist
         try {
@@ -94,25 +99,6 @@ public class VideoService {
         } catch (IOException e) {
             logger.error("Failed to create directories", e);
         }
-    }
-
-    public Video create(VideoDto videoDto) {
-        Video video = new Video(
-                videoDto.getTitle(),
-                videoDto.getDescription(),
-                videoDto.getVideoPath(),
-                videoDto.getThumbnailPath(),
-                videoDto.getThumbnailCompressedPath(),
-                videoDto.getFileSize() != null ? videoDto.getFileSize() : 0L,
-                videoDto.getDuration() != null ? videoDto.getDuration() : new Time(0),
-                videoDto.getTranscoded() != null ? videoDto.getTranscoded() : false,
-                videoDto.getScheduledAt(),
-                null, // tags - not in VideoDto, can be null
-                videoDto.getViewCount() != null ? videoDto.getViewCount() : 0,
-                videoDto.getUser()
-        );
-
-        return videoRepository.save(video);
     }
 
     /**
@@ -131,13 +117,13 @@ public class VideoService {
      * @return Created Video entity
      * @throws IllegalArgumentException if validation fails
      * @throws IOException if file saving fails
-     * @throws RuntimeException if user is not found or any other error occurs
+     * @throws RuntimeException if a user is not found or any other error occurs
      */
     @Transactional(rollbackFor = {Exception.class})
     public Video createVideoWithFiles(String title, String description, String tags,
                                       Double latitude, Double longitude,
                                       MultipartFile videoFile, MultipartFile thumbnailFile,
-                                      User user) throws IOException {
+                                      User user, LocalDateTime scheduledAt) throws Exception {
         logger.debug("Starting transactional video creation with files for user: {}", user.getId());
 
         // Create DTO from form data and files
@@ -148,6 +134,7 @@ public class VideoService {
         createVideoDto.setLatitude(latitude);
         createVideoDto.setLongitude(longitude);
         createVideoDto.setFileSize(videoFile.getSize());
+        createVideoDto.setScheduledAt(scheduledAt);
 
         // Save files and set paths
         String videoPath = saveVideoFile(videoFile);
@@ -166,11 +153,11 @@ public class VideoService {
      * @param createVideoDto DTO containing video creation data
      * @param user Authenticated user creating the video
      * @return Saved Video entity
-     * @throws IllegalArgumentException if file size exceeds maximum allowed size
-     * @throws RuntimeException if user is not found or any other error occurs
+     * @throws IllegalArgumentException if the file size exceeds the maximum allowed size
+     * @throws RuntimeException if a user is not found or any other error occurs
      */
     @Transactional(rollbackFor = {Exception.class})
-    public Video createVideo(CreateVideoDto createVideoDto, User user) {
+    public Video createVideo(CreateVideoDto createVideoDto, User user) throws Exception {
         logger.debug("Starting transactional video creation for user: {}", user.getId());
 
         // Validate file size
@@ -180,14 +167,14 @@ public class VideoService {
             throw new IllegalArgumentException("Video file size exceeds maximum allowed size of 200MB");
         }
 
-        // Load user from database to ensure it's a managed entity within the transaction
+        // Load a user from a database to ensure it's a managed entity within the transaction
         User managedUser = userService.getUserById(user.getId());
         if (managedUser == null) {
             logger.error("User not found with id: {}", user.getId());
             throw new RuntimeException("User not found with id: " + user.getId());
         }
 
-        // Create Video entity
+        // Create a Video entity
         Video video = new Video(
                 createVideoDto.getTitle(),
                 createVideoDto.getDescription(),
@@ -195,9 +182,9 @@ public class VideoService {
                 createVideoDto.getThumbnailPath(),
                 null, // thumbnailCompressedPath - not needed for creation
                 createVideoDto.getFileSize() != null ? createVideoDto.getFileSize() : 0L,
-                createVideoDto.getDuration() != null ? createVideoDto.getDuration() : new Time(0), // duration from extracted metadata
+                videoMetadataService.getVideoDuration(createVideoDto.getVideoPath()),
                 false, // transcoded - default false
-                null, // scheduledAt - not needed for immediate posting
+                createVideoDto.getScheduledAt(), // scheduledAt - use value from DTO for scheduling
                 createVideoDto.getTags(),
                 0L, // viewCount - starts at 0
                 managedUser
@@ -209,30 +196,50 @@ public class VideoService {
             video.setLongitude(createVideoDto.getLongitude());
         }
 
-        // Save video - this will be committed when transaction completes successfully
+        // Save video - this will be committed when the transaction completes successfully
         Video savedVideo = videoRepository.save(video);
         logger.debug("Video entity saved with ID: {}", savedVideo.getId());
 
-        // Flush to ensure immediate persistence within transaction
+        // Flush to ensure immediate persistence within a transaction
         videoRepository.flush();
         logger.debug("Transaction flushed - video will be committed on method completion");
+
+        // Send a transcoding job to the message queue
+        try {
+            transcodingProducerService.sendTranscodingJob(savedVideo.getId(), savedVideo.getVideoPath());
+            logger.info("Transcoding job sent for video: {}", savedVideo.getId());
+        } catch (Exception e) {
+            logger.error("Failed to send transcoding job for video {}: {}", savedVideo.getId(), e.getMessage());
+            // Don't fail the video creation if a transcoding job fails to send
+            // The video will remain with transcoded=false and can be processed later
+        }
 
         return savedVideo;
     }
 
+    /**
+     * Dobija sve javno dostupne video objave.
+     * Video je javno dostupan ako scheduledAt je NULL ili je prošao zakazani datum.
+     */
     public Iterable<Video> getAllVideos() {
-        return videoRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"));
+        return videoRepository.findAllPubliclyAvailable(LocalDateTime.now());
     }
 
+    /**
+     * Dobija paginiranu listu javno dostupnih video objava.
+     * Video je javno dostupan ako scheduledAt je NULL ili je prošao zakazani datum.
+     */
     public PageResponse<Video> getVideosPaginated(int page, int size) {
         int validPage = Math.max(0, page);
         int validSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
 
         Pageable pageable = PageRequest.of(validPage, validSize, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<Video> videoPage = videoRepository.findAll(pageable);
-        videoPage.getContent().forEach(video -> video.setViewCount(
-                videoViewRepository.countVideoViewByVideo_Id(video.getId())
-        ));
+        Page<Video> videoPage = videoRepository.findAllPubliclyAvailable(LocalDateTime.now(), pageable);
+        videoPage.getContent().forEach(video -> {
+            video.setViewCount(
+                    videoViewRepository.countVideoViewByVideo_Id(video.getId())
+            );
+        });
 
         return PageResponse.from(videoPage);
     }
@@ -390,7 +397,7 @@ public class VideoService {
         // Measure performance for [S2] requirement
         long startTime = System.currentTimeMillis();
 
-        Page<Video> videoPage = videoRepository.findNearby(minLat, maxLat, minLon, maxLon, centerLat, centerLon, radiusMeters, pageable);
+        Page<Video> videoPage = videoRepository.findNearby(minLat, maxLat, minLon, maxLon, centerLat, centerLon, radiusMeters, LocalDateTime.now(), pageable);
         videoPage.getContent().forEach(v -> v.setViewCount(videoViewRepository.countVideoViewByVideo_Id(v.getId())));
 
         // Record performance metric

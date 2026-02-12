@@ -6,9 +6,10 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -18,79 +19,79 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
+@Slf4j
 @Component
-class JwtAuthenticationFilter extends OncePerRequestFilter {
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final String AUTHORIZATION_HEADER = "Authorization";
+    private static final String BEARER_PREFIX = "Bearer ";
+
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
     private final TokenBlacklistService tokenBlacklistService;
 
-    public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService, TokenBlacklistService tokenBlacklistService) {
-        this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
-        this.tokenBlacklistService = tokenBlacklistService;
-    }
-
     @Override
-    protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull FilterChain filterChain) throws ServletException, IOException {
-        String requestPath = request.getRequestURI();
-        if (requestPath.contains("/api/videos/create")) {
-            System.out.println("JWT Filter: Processing /api/videos/create request");
-            System.out.println("Method: " + request.getMethod());
-        }
-        
-        final String authHeader = request.getHeader("Authorization");
+    protected void doFilterInternal(
+            @NonNull HttpServletRequest request,
+            @NonNull HttpServletResponse response,
+            @NonNull FilterChain filterChain) throws ServletException, IOException {
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            if (requestPath.contains("/api/videos/create")) {
-                System.out.println("JWT Filter: No Authorization header found for /api/videos/create");
-            }
+        final String authHeader = request.getHeader(AUTHORIZATION_HEADER);
+
+        if (!isValidAuthHeader(authHeader)) {
             filterChain.doFilter(request, response);
             return;
         }
-        
-        if (requestPath.contains("/api/videos/create")) {
-            System.out.println("JWT Filter: Authorization header found");
-        }
 
         try {
-            final String jwt = authHeader.substring(7);
-
-            // Check if token is blacklisted (user logged out)
-            if (tokenBlacklistService.isTokenBlacklisted(jwt)) {
-                filterChain.doFilter(request, response);
-                return;
-            }
-
-            final String userEmail = jwtService.extractUsername(jwt);
-
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-            if (userEmail != null && authentication == null) {
-                UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
-
-                if (jwtService.isTokenValid(jwt, userDetails)) {
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                            userDetails,
-                            null,
-                            userDetails.getAuthorities()
-                    );
-
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                    
-                    if (requestPath.contains("/api/videos/create")) {
-                        System.out.println("JWT Filter: User authenticated: " + userEmail);
-                    }
-                }
-            }
-
-            filterChain.doFilter(request, response);
+            String jwt = extractToken(authHeader);
+            processAuthentication(jwt, request);
         } catch (Exception e) {
-            filterChain.doFilter(request, response);
-            if (requestPath.contains("/api/videos/create")) {
-                System.out.println("JWT Filter: Exception: " + e.getMessage());
-                e.printStackTrace();
-            }
+            log.debug("JWT authentication failed: {}", e.getMessage());
+        }
+
+        filterChain.doFilter(request, response);
+    }
+
+    private boolean isValidAuthHeader(String authHeader) {
+        return authHeader != null && authHeader.startsWith(BEARER_PREFIX);
+    }
+
+    private String extractToken(String authHeader) {
+        return authHeader.substring(BEARER_PREFIX.length());
+    }
+
+    private void processAuthentication(String jwt, HttpServletRequest request) {
+        if (tokenBlacklistService.isTokenBlacklisted(jwt)) {
+            log.debug("Token is blacklisted");
+            return;
+        }
+
+        String username = jwtService.extractUsername(jwt);
+
+        if (username != null && isNotAuthenticated()) {
+            authenticateUser(username, jwt, request);
+        }
+    }
+
+    private boolean isNotAuthenticated() {
+        return SecurityContextHolder.getContext().getAuthentication() == null;
+    }
+
+    private void authenticateUser(String username, String jwt, HttpServletRequest request) {
+        UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+
+        if (jwtService.isTokenValid(jwt, userDetails)) {
+            UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                    userDetails,
+                    null,
+                    userDetails.getAuthorities()
+            );
+            authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+            SecurityContextHolder.getContext().setAuthentication(authToken);
+
+            log.debug("User authenticated: {}", username);
         }
     }
 }

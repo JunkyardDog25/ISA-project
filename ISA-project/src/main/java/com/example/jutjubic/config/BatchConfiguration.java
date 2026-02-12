@@ -7,6 +7,7 @@ import com.example.jutjubic.repositories.VideoViewRepository;
 import com.example.jutjubic.services.CommentService;
 import com.example.jutjubic.services.LikeService;
 import com.example.jutjubic.utils.PopularityCalculator;
+import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.job.Job;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.job.parameters.RunIdIncrementer;
@@ -25,9 +26,16 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.LocalDate;
 import java.util.Map;
+import java.util.UUID;
 
 @Configuration
+@RequiredArgsConstructor
 public class BatchConfiguration {
+
+    private static final int CHUNK_SIZE = 10;
+    private static final int PAGE_SIZE = 100;
+    private static final int COMMENT_WEIGHT = 2;
+
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
     private final VideoViewRepository videoViewRepository;
@@ -35,60 +43,20 @@ public class BatchConfiguration {
     private final CommentService commentService;
     private final LikeService likeService;
 
-    public BatchConfiguration(JobRepository jobRepository,
-                              PlatformTransactionManager transactionManager,
-                              VideoViewRepository videoViewRepository,
-                              DailyPopularVideoRepository dailyPopularVideoRepository,
-                              CommentService commentService,
-                              LikeService likeService) {
-        this.jobRepository = jobRepository;
-        this.transactionManager = transactionManager;
-        this.videoViewRepository = videoViewRepository;
-        this.dailyPopularVideoRepository = dailyPopularVideoRepository;
-        this.commentService = commentService;
-        this.likeService = likeService;
-    }
-
     @Bean
     public RepositoryItemReader<VideoView> reader() {
         return new RepositoryItemReaderBuilder<VideoView>()
                 .name("videoViewItemReader")
                 .repository(videoViewRepository)
                 .methodName("findAllWithVideo")
-                .pageSize(100)
+                .pageSize(PAGE_SIZE)
                 .sorts(Map.of("createdAt", Sort.Direction.DESC))
                 .build();
     }
 
     @Bean
     public ItemProcessor<VideoView, DailyPopularVideo> processor() {
-        return videoView -> {
-            if (videoView == null) {
-                return null;
-            }
-            long viewCount = videoView.getVideo().getViewCount();
-            if (viewCount == 0) {
-                DailyPopularVideo dailyPopularVideo = new DailyPopularVideo();
-                dailyPopularVideo.setVideo(videoView.getVideo());
-                dailyPopularVideo.setExecutionDate(LocalDate.now());
-                dailyPopularVideo.setPopularityScore(0.0);
-                return dailyPopularVideo;
-            }
-
-            long commentCount = commentService.getCommentCount(videoView.getVideo().getId());
-            long likeCount = likeService.getLikeCount(videoView.getVideo().getId());
-
-            long engagement_rate = likeCount + commentCount * 2;
-
-            Double score = PopularityCalculator.calculateScore(videoView);
-            score = score + engagement_rate;
-
-            DailyPopularVideo dailyPopularVideo = new DailyPopularVideo();
-            dailyPopularVideo.setVideo(videoView.getVideo());
-            dailyPopularVideo.setExecutionDate(LocalDate.now());
-            dailyPopularVideo.setPopularityScore(score);
-            return dailyPopularVideo;
-        };
+        return this::processVideoView;
     }
 
     @Bean
@@ -100,9 +68,9 @@ public class BatchConfiguration {
     }
 
     @Bean
-    public Step step(PlatformTransactionManager transactionManager) {
+    public Step step() {
         return new StepBuilder("videoView-to-dailyPopular-step", jobRepository)
-                .<VideoView, DailyPopularVideo>chunk(10)
+                .<VideoView, DailyPopularVideo>chunk(CHUNK_SIZE)
                 .reader(reader())
                 .processor(processor())
                 .writer(writer())
@@ -114,7 +82,40 @@ public class BatchConfiguration {
     public Job job() {
         return new JobBuilder("videoView-to-dailyPopular", jobRepository)
                 .incrementer(new RunIdIncrementer())
-                .start(step(transactionManager))
+                .start(step())
                 .build();
+    }
+
+    private DailyPopularVideo processVideoView(VideoView videoView) {
+        if (videoView == null) {
+            return null;
+        }
+
+        UUID videoId = videoView.getVideo().getId();
+        long viewCount = videoView.getVideo().getViewCount();
+
+        double score = calculatePopularityScore(videoView, videoId, viewCount);
+
+        return createDailyPopularVideo(videoView, score);
+    }
+
+    private double calculatePopularityScore(VideoView videoView, UUID videoId, long viewCount) {
+        if (viewCount == 0) {
+            return 0.0;
+        }
+
+        long commentCount = commentService.getCommentCount(videoId);
+        long likeCount = likeService.getLikeCount(videoId);
+        long engagementBonus = likeCount + commentCount * COMMENT_WEIGHT;
+
+        return PopularityCalculator.calculateScore(videoView) + engagementBonus;
+    }
+
+    private DailyPopularVideo createDailyPopularVideo(VideoView videoView, double score) {
+        DailyPopularVideo dailyPopularVideo = new DailyPopularVideo();
+        dailyPopularVideo.setVideo(videoView.getVideo());
+        dailyPopularVideo.setExecutionDate(LocalDate.now());
+        dailyPopularVideo.setPopularityScore(score);
+        return dailyPopularVideo;
     }
 }

@@ -2,6 +2,28 @@
 import { useToast } from '@/composables/useToast.js';
 
 const { toasts } = useToast();
+
+function getToastClass(type) {
+  switch (type) {
+    case 'success':
+      return 'text-bg-success';
+    case 'info':
+      return 'text-bg-info';
+    default:
+      return 'text-bg-danger';
+  }
+}
+
+function getToastLabel(type) {
+  switch (type) {
+    case 'success':
+      return '✓ Success';
+    case 'info':
+      return 'ℹ Info';
+    default:
+      return '✕ Error';
+  }
+}
 </script>
 
 <template>
@@ -11,17 +33,17 @@ const { toasts } = useToast();
       :key="toast.id"
       :id="`toast-${toast.id}`"
       class="toast"
-      :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'"
+      :class="getToastClass(toast.type)"
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
     >
       <div
         class="toast-header"
-        :class="toast.type === 'success' ? 'text-bg-success' : 'text-bg-danger'"
+        :class="getToastClass(toast.type)"
       >
         <strong class="me-auto">
-          {{ toast.type === 'success' ? '✓ Success' : '✕ Error' }}
+          {{ getToastLabel(toast.type) }}
         </strong>
         <button
           type="button"

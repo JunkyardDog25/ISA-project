@@ -1,11 +1,12 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useRoute, useRouter, RouterLink } from 'vue-router';
-import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount } from '@/services/VideoService.js';
+import { getVideoById, toggleLike, getLikeStatus, getLikeCount, incrementViewCount, getStreamingInfo } from '@/services/VideoService.js';
 import { getCommentsByVideoId, createComment, getCommentLimitStatus } from '@/services/CommentService.js';
 import { useAuth } from '@/composables/useAuth.js';
 import { useToast } from '@/composables/useToast.js';
 import CustomVideoPlayer from '@/components/common/CustomVideoPlayer.vue';
+import LiveChat from '@/components/LiveChat.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -25,6 +26,13 @@ const commentsLoading = ref(false);
 const newComment = ref('');
 const isSubmittingComment = ref(false);
 const isCommentFocused = ref(false);
+
+// ----- Live Streaming State -----
+const streamingInfo = ref(null);
+const isLiveMode = ref(false);
+const liveElapsedSeconds = ref(0);
+const liveSyncInterval = ref(null);
+const isChatVisible = ref(true); // Chat overlay visibility toggle
 
 // ----- Comments Pagination State -----
 const commentsPage = ref(0);
@@ -64,6 +72,9 @@ async function fetchVideo() {
     const response = await getVideoById(videoId.value);
     video.value = response.data;
 
+    // Fetch streaming info for live sync
+    await fetchStreamingInfo();
+
     // Increment view count
     await incrementViews();
 
@@ -87,6 +98,74 @@ async function fetchVideo() {
     console.error('Error fetching video:', e);
   } finally {
     loading.value = false;
+  }
+}
+
+/**
+ * Dobija streaming info za video i postavlja live mode ako je potrebno.
+ */
+async function fetchStreamingInfo() {
+  try {
+    const response = await getStreamingInfo(videoId.value);
+    streamingInfo.value = response.data;
+
+    if (response.data.isLive) {
+      // Video je trenutno live - postavi elapsed seconds
+      isLiveMode.value = true;
+      liveElapsedSeconds.value = response.data.elapsedSeconds;
+
+      // Pokreni interval za sinhronizaciju (svakih 30 sekundi)
+      startLiveSyncInterval();
+    } else {
+      isLiveMode.value = false;
+      stopLiveSyncInterval();
+    }
+  } catch (e) {
+    console.error('Error fetching streaming info:', e);
+    isLiveMode.value = false;
+  }
+}
+
+/**
+ * Pokreće interval za periodičnu sinhronizaciju sa serverom u live modu.
+ */
+function startLiveSyncInterval() {
+  stopLiveSyncInterval(); // Očisti prethodni interval ako postoji
+
+  liveSyncInterval.value = setInterval(async () => {
+    try {
+      const response = await getStreamingInfo(videoId.value);
+      streamingInfo.value = response.data;
+
+      if (!response.data.isLive) {
+        // Video je završio, prelazi u VOD režim
+        isLiveMode.value = false;
+        stopLiveSyncInterval();
+      }
+    } catch (e) {
+      console.error('Error syncing streaming info:', e);
+    }
+  }, 5000); // Svakih 5 sekundi
+}
+
+/**
+ * Zaustavlja live sync interval.
+ */
+function stopLiveSyncInterval() {
+  if (liveSyncInterval.value) {
+    clearInterval(liveSyncInterval.value);
+    liveSyncInterval.value = null;
+  }
+}
+
+/**
+ * Callback kada se video učita - postavlja početnu poziciju za live mode.
+ */
+function handleVideoLoaded() {
+  if (isLiveMode.value && liveElapsedSeconds.value > 0 && videoRef.value) {
+    // Postavi video na ispravnu poziciju
+    videoRef.value.currentTime = liveElapsedSeconds.value;
+    videoRef.value.play().catch(e => console.log('Autoplay blocked:', e));
   }
 }
 
@@ -326,6 +405,11 @@ function goBack() {
 onMounted(() => {
   fetchVideo();
 });
+
+onUnmounted(() => {
+  // Cleanup live sync interval
+  stopLiveSyncInterval();
+});
 </script>
 
 <template>
@@ -345,28 +429,63 @@ onMounted(() => {
 
     <!-- Video Content -->
     <div v-else-if="video" class="video-content">
-      <!-- Video Player -->
-      <div
-        class="video-player-container"
-        @mousemove="videoControlsRef?.handleMouseMove()"
-        @mouseleave="videoControlsRef?.handleMouseLeave()"
-      >
-        <video
-          ref="videoRef"
-          class="video-player"
-          autoplay
-          :poster="thumbnailUrl"
-          @click="videoControlsRef?.togglePlay()"
+      <!-- Video Player with Chat Overlay -->
+      <div class="video-with-chat" :class="{ 'chat-visible': isLiveMode && isChatVisible }">
+        <div
+          class="video-player-container"
+          @mousemove="videoControlsRef?.handleMouseMove()"
+          @mouseleave="videoControlsRef?.handleMouseLeave()"
         >
-          <source :src="videoUrl" type="video/mp4" />
-          Your browser does not support the video tag.
-        </video>
+          <!-- Live Badge -->
+          <div v-if="isLiveMode" class="live-badge">
+            <span class="live-dot"></span>
+            LIVE
+          </div>
 
-        <!-- Video Controls Component -->
-        <CustomVideoPlayer
-          ref="videoControlsRef"
-          :video-ref="videoRef"
-        />
+          <!-- Chat Toggle Button -->
+          <button
+            v-if="isLiveMode"
+            class="chat-toggle-btn"
+            @click="isChatVisible = !isChatVisible"
+            :title="isChatVisible ? 'Sakrij chat' : 'Prikaži chat'"
+          >
+            <svg v-if="isChatVisible" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+              <path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+            </svg>
+          </button>
+
+          <video
+            ref="videoRef"
+            class="video-player"
+            autoplay
+            :poster="thumbnailUrl"
+            @click="videoControlsRef?.togglePlay()"
+            @loadeddata="handleVideoLoaded"
+          >
+            <source :src="videoUrl" type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+
+          <!-- Video Controls Component -->
+          <CustomVideoPlayer
+            ref="videoControlsRef"
+            :video-ref="videoRef"
+            :is-live-mode="isLiveMode"
+          />
+
+          <!-- Live Chat Overlay (inside player, right side) -->
+          <div v-if="isLiveMode" v-show="isChatVisible" class="chat-overlay">
+            <LiveChat
+              :video-id="videoId"
+              :is-live="isLiveMode"
+              :overlay-mode="true"
+            />
+          </div>
+        </div>
       </div>
 
       <!-- Video Info Section -->
@@ -431,6 +550,7 @@ onMounted(() => {
             {{ isDescriptionExpanded ? 'Show less' : '...more' }}
           </span>
         </div>
+
 
         <!-- Comments Section -->
         <div class="comments-section">
@@ -617,9 +737,14 @@ onMounted(() => {
 
 /* Video Content */
 .video-content {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 1rem;
+}
+
+/* Video with Chat Layout */
+.video-with-chat {
+  position: relative;
 }
 
 /* Video Player */
@@ -638,6 +763,66 @@ onMounted(() => {
   cursor: pointer;
 }
 
+/* Chat Toggle Button */
+.chat-toggle-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 95;  /* Below header z-index (100) */
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.chat-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.05);
+}
+
+.chat-toggle-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Chat Overlay */
+.chat-overlay {
+  position: absolute;
+  top: 16px;
+  right: 0;
+  bottom: 90px;  /* Above video controls/seek bar */
+  width: 320px;
+  z-index: 90;  /* Below header z-index (100) */
+  pointer-events: auto;
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Fullscreen chat overlay adjustments */
+.video-player-container:fullscreen .chat-overlay {
+  top: 16px;
+  bottom: 90px;
+  z-index: 150;  /* Higher z-index in fullscreen */
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 /* Fullscreen styles */
 .video-player-container:fullscreen {
   border-radius: 0;
@@ -646,6 +831,10 @@ onMounted(() => {
 .video-player-container:fullscreen .video-player {
   height: 100vh;
   aspect-ratio: unset;
+}
+
+.video-player-container:fullscreen .chat-toggle-btn {
+  z-index: 160;  /* Higher z-index in fullscreen */
 }
 
 /* Video Info */
@@ -1123,6 +1312,51 @@ onMounted(() => {
 .load-more-btn .spinner-small {
   width: 16px;
   height: 16px;
+}
+
+/* Live Chat Container */
+.live-chat-container {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Live Badge */
+.live-badge {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #cc0000;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 4px;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+  animation: live-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
 }
 
 /* Responsive */

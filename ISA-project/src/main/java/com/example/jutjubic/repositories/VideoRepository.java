@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +20,28 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
      * Pronalazi sve video objave za datog korisnika sa paginacijom.
      */
     Page<Video> findByCreatorId(UUID creatorId, Pageable pageable);
+
+    /**
+     * Pronalazi sve javno dostupne video objave sa paginacijom.
+     * Video je javno dostupan ako:
+     * - scheduledAt je NULL (nije zakazan) ili
+     * - scheduledAt je manji ili jednak trenutnom vremenu (zakazani datum je prošao)
+     *
+     * @param now Trenutno vreme
+     * @param pageable Parametri paginacije
+     * @return Stranica javno dostupnih video objava
+     */
+    @Query("SELECT v FROM Video v WHERE v.scheduledAt IS NULL OR v.scheduledAt <= :now")
+    Page<Video> findAllPubliclyAvailable(@Param("now") LocalDateTime now, Pageable pageable);
+
+    /**
+     * Pronalazi sve javno dostupne video objave bez paginacije.
+     *
+     * @param now Trenutno vreme
+     * @return Lista javno dostupnih video objava
+     */
+    @Query("SELECT v FROM Video v WHERE v.scheduledAt IS NULL OR v.scheduledAt <= :now ORDER BY v.createdAt DESC")
+    List<Video> findAllPubliclyAvailable(@Param("now") LocalDateTime now);
 
     /**
      * Finds videos within a specified radius from a center point using spatial indexing.
@@ -62,6 +86,7 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
     @Query(value = "SELECT * FROM videos v " +
             "WHERE v.latitude BETWEEN :minLat AND :maxLat " +
             "AND v.longitude BETWEEN :minLon AND :maxLon " +
+            "AND (v.scheduled_at IS NULL OR v.scheduled_at <= :now) " +
             "AND (6371000 * ACOS( " +
             "    COS(RADIANS(:lat)) * COS(RADIANS(v.latitude)) * " +
             "    COS(RADIANS(v.longitude) - RADIANS(:lon)) + " +
@@ -70,6 +95,7 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
             countQuery = "SELECT count(*) FROM videos v " +
                     "WHERE v.latitude BETWEEN :minLat AND :maxLat " +
                     "AND v.longitude BETWEEN :minLon AND :maxLon " +
+                    "AND (v.scheduled_at IS NULL OR v.scheduled_at <= :now) " +
                     "AND (6371000 * ACOS( " +
                     "    COS(RADIANS(:lat)) * COS(RADIANS(v.latitude)) * " +
                     "    COS(RADIANS(v.longitude) - RADIANS(:lon)) + " +
@@ -84,6 +110,24 @@ public interface VideoRepository extends JpaRepository<Video, UUID> {
             @Param("lat") double lat,
             @Param("lon") double lon,
             @Param("radiusMeters") double radiusMeters,
+            @Param("now") LocalDateTime now,
             Pageable pageable
     );
+
+    /**
+     * Pronalazi sve video objave sa nekompresovanim thumbnail-ima koje su starije od određenog datuma.
+     * Video ima nekompresovan thumbnail ako:
+     * - thumbnailPath nije NULL (ima original thumbnail)
+     * - thumbnailCompressedPath je NULL (nema kompresovanu verziju)
+     * - createdAt je manji od dateCutoff (starije od mesec dana)
+     */
+    @Query("SELECT v FROM Video v WHERE v.thumbnailPath IS NOT NULL AND v.thumbnailCompressedPath IS NULL AND v.createdAt < :dateCutoff")
+    List<Video> findVideosWithUncompressedThumbnails(@Param("dateCutoff") LocalDateTime dateCutoff);
+
+    /**
+     * Pronalazi SVE video objave sa nekompresovanim thumbnail-ima (bez obzira na starost).
+     * Koristi se za manuelnu kompresiju svih thumbnail-a.
+     */
+    @Query("SELECT v FROM Video v WHERE v.thumbnailPath IS NOT NULL AND v.thumbnailCompressedPath IS NULL")
+    List<Video> findAllVideosWithUncompressedThumbnails();
 }
