@@ -60,7 +60,7 @@ public class RateLimitingFilter implements Filter {
 
     private boolean isRateLimitExceeded(String clientIp) {
         long now = System.currentTimeMillis();
-        RateLimitAttempt attempt = requestCounts.computeIfAbsent(clientIp, _ -> new RateLimitAttempt());
+        RateLimitAttempt attempt = requestCounts.computeIfAbsent(clientIp, key -> new RateLimitAttempt());
 
         if (isWindowExpired(attempt, now)) {
             resetWindow(attempt, now);

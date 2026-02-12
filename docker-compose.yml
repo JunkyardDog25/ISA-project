@@ -1,0 +1,87 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: isa-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: isa_db
+      MYSQL_USER: isa_user
+      MYSQL_PASSWORD: isa_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: isa-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  isa-app-1:
+    build:
+      context: ./ISA-project
+      dockerfile: Dockerfile
+    container_name: isa-app-1
+    environment:
+      DB_URL: jdbc:mysql://db:3306/isa_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&socketTimeout=5000&connectTimeout=5000
+      DB_USER: isa_user
+      DB_PASSWORD: isa_pass
+      JWT_SECRET_KEY: "changeme-very-secret-key"
+      SUPPORT_EMAIL: "support@example.com"
+      APP_PASSWORD: "dummy-password"
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  isa-app-2:
+    build:
+      context: ./ISA-project
+      dockerfile: Dockerfile
+    container_name: isa-app-2
+    environment:
+      DB_URL: jdbc:mysql://db:3306/isa_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&socketTimeout=5000&connectTimeout=5000
+      DB_USER: isa_user
+      DB_PASSWORD: isa_pass
+      JWT_SECRET_KEY: "changeme-very-secret-key"
+      SUPPORT_EMAIL: "support@example.com"
+      APP_PASSWORD: "dummy-password"
+      RABBITMQ_HOST: rabbitmq
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  load-balancer:
+    image: haproxy:2.9
+    container_name: isa-haproxy
+    ports:
+      - "8081:8080"
+      - "8404:8404"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - isa-app-1
+      - isa-app-2
+
+volumes:
+  db_data:
+
