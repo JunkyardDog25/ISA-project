@@ -6,6 +6,7 @@ import com.example.jutjubic.dto.ViewResponseDto;
 import com.example.jutjubic.models.User;
 import com.example.jutjubic.models.Video;
 import com.example.jutjubic.models.VideoView;
+import com.example.jutjubic.messaging.UploadEventPublisher;
 import com.example.jutjubic.repositories.VideoRepository;
 import com.example.jutjubic.repositories.VideoViewRepository;
 import com.example.jutjubic.utils.IpLocationExtractor;
@@ -78,16 +79,19 @@ public class VideoService {
     private final PerformanceMetricsService performanceMetricsService;
     private final TranscodingProducerService transcodingProducerService;
     private final VideoMetadataService videoMetadataService;
+    private final UploadEventPublisher uploadEventPublisher;
 
     public VideoService(VideoRepository videoRepository, VideoViewRepository videoViewRepository,
                         UserService userService, PerformanceMetricsService performanceMetricsService,
-                        TranscodingProducerService transcodingProducerService, VideoMetadataService videoMetadataService) {
+                        TranscodingProducerService transcodingProducerService, VideoMetadataService videoMetadataService,
+                        UploadEventPublisher uploadEventPublisher) {
         this.videoRepository = videoRepository;
         this.videoViewRepository = videoViewRepository;
         this.userService = userService;
         this.performanceMetricsService = performanceMetricsService;
         this.transcodingProducerService = transcodingProducerService;
         this.videoMetadataService = videoMetadataService;
+        this.uploadEventPublisher = uploadEventPublisher;
 
         // Ensure directories exist
         try {
@@ -199,6 +203,9 @@ public class VideoService {
         // Save video - this will be committed when the transaction completes successfully
         Video savedVideo = videoRepository.save(video);
         logger.debug("Video entity saved with ID: {}", savedVideo.getId());
+
+        // Publish upload event to RabbitMQ after transaction commits
+        uploadEventPublisher.publishBothAfterCommit(savedVideo);
 
         // Flush to ensure immediate persistence within a transaction
         videoRepository.flush();
