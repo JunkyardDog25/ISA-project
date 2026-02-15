@@ -4,6 +4,9 @@ import com.example.jutjubic.dto.MqBenchResult;
 import com.example.jutjubic.messaging.UploadEventPublisher;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.UUID;
+
 @RestController
 @RequestMapping("/api/mq")
 public class MqBenchController {
@@ -20,5 +23,20 @@ public class MqBenchController {
         if (count > 5000) count = 5000;
 
         return publisher.benchmark(count);
+    }
+
+    /**
+     * Test endpoint za direktno slanje poruke na upload queue-ove.
+     * Pozovite: POST /api/mq/test
+     */
+    @PostMapping("/test")
+    public String testUploadQueues() {
+        try {
+            UUID testId = UUID.randomUUID();
+            publisher.publishBothWithDataDirect(testId, "Test Video", 12345L, "testuser", LocalDateTime.now());
+            return "SUCCESS: Test message sent to upload.queue.json and upload.queue.pb with videoId=" + testId;
+        } catch (Exception e) {
+            return "ERROR: " + e.getMessage();
+        }
     }
 }

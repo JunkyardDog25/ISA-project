@@ -64,6 +64,17 @@ public class UploadEventPublisher {
         }
     }
 
+    /**
+     * Public version for direct testing without transaction.
+     */
+    public void publishBothWithDataDirect(UUID videoId, String title, long fileSize, String authorUsername, LocalDateTime createdAt) {
+        logger.info("publishBothWithDataDirect called for video: {}", videoId);
+        publishJsonWithData(videoId, title, fileSize, authorUsername, createdAt);
+        logger.info("JSON message sent for video: {}", videoId);
+        publishProtobufWithData(videoId, title, fileSize, authorUsername, createdAt);
+        logger.info("Protobuf message sent for video: {}", videoId);
+    }
+
     private void publishJsonWithData(UUID videoId, String title, long fileSize, String authorUsername, LocalDateTime createdAt) {
         UploadEventJson json = new UploadEventJson(videoId, title, fileSize, authorUsername, createdAt);
 
